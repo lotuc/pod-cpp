@@ -1,3 +1,6 @@
+#ifndef POD_HELPER_H_
+#define POD_HELPER_H_
+
 #include "pod.h"
 #include "pod_asio.h"
 #include "pod_json.h"
@@ -123,3 +126,5 @@ namespace lotuc::pod
     return build_json_ctx("", cleanup);
   }
 }
+
+#endif // POD_HELPER_H_

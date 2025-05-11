@@ -1,5 +1,5 @@
-#ifndef POD_IMPL_H_
-#define POD_IMPL_H_
+#ifndef POD_ASIO_H_
+#define POD_ASIO_H_
 
 #include "bencode.hpp"
 #include "pod.h"
@@ -119,4 +119,4 @@ namespace lotuc::pod
   };
 }
 
-#endif // POD_IMPL_H_
+#endif // POD_ASIO_H_
