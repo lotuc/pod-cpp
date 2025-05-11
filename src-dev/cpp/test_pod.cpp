@@ -4,9 +4,9 @@
 
 #include <memory>
 
-define_pod_var_(pod_test_pod_add_sync, "pod.test-pod", "add-sync");
+define_pod_var_(json, pod_test_pod_add_sync, "pod.test-pod", "add-sync");
 
-void pod_test_pod_add_sync::invoke(lotuc::pod::Context const &ctx,
+void pod_test_pod_add_sync::invoke(lotuc::pod::Context<json> const &ctx,
                                    std::string const &id,
                                    json const &args)
 {
@@ -15,23 +15,25 @@ void pod_test_pod_add_sync::invoke(lotuc::pod::Context const &ctx,
   {
     r += a.get<int>();
   }
-  ctx._transport->send_invoke_success(id, ctx._encoder->encode(r));
+  json ret = r;
+  ctx.send_invoke_success(id, ret);
 }
 
-define_pod_var(echo, echo);
+define_pod_var(json, echo, echo);
 
-void echo_echo::invoke(lotuc::pod::Context const &ctx, std::string const &id, json const &args)
+void echo_echo::invoke(lotuc::pod::Context<json> const &ctx,
+                       std::string const &id,
+                       json const &args)
 {
-  auto res = ctx._encoder->encode(args[0]);
-  ctx._transport->send_invoke_success(id, res);
+  ctx.send_invoke_success(id, args[0]);
 }
 
 int main(int argc, char **argv)
 {
   namespace pod = lotuc::pod;
 
-  std::cerr << "BABASHKA_POD: " << pod::Pod::getenv("BABASHKA_POD") << "\n";
-  std::cerr << "BABASHKA_POD_TRANSPORT: " << pod::Pod::getenv("BABASHKA_POD_TRANSPORT") << "\n";
+  std::cerr << "BABASHKA_POD: " << pod::getenv("BABASHKA_POD") << "\n";
+  std::cerr << "BABASHKA_POD_TRANSPORT: " << pod::getenv("BABASHKA_POD_TRANSPORT") << "\n";
 
   std::string pod_id{};
   if(argc > 1)
@@ -39,12 +41,12 @@ int main(int argc, char **argv)
     pod_id = argv[1];
   }
 
-  std::unique_ptr<pod::Context> ctx = pod::build_ctx(pod_id);
+  std::unique_ptr<pod::Context<json>> ctx = pod::build_json_ctx(pod_id);
 
   ctx->add_var(std::make_unique<pod_test_pod_add_sync>());
   ctx->add_var(std::make_unique<echo_echo>());
 
-  pod::Pod pod_{ *ctx };
+  pod::Pod<json> pod_{ *ctx };
   pod_.start();
 
   return 0;

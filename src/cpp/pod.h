@@ -1,40 +1,41 @@
 #ifndef POD_H_
 #define POD_H_
 
-#include <nlohmann/json.hpp>
 #include "bencode.hpp"
 
 #include <memory>
 #include <string>
 #include <utility>
 
-using json = nlohmann::json;
 namespace bc = bencode;
 
 namespace lotuc::pod
 {
+  static std::string getenv(std::string const &n)
+  {
+    char const *s = ::getenv(n.c_str());
+    return s ? s : "";
+  }
+
+  static bool is_babashka_pod_env()
+  {
+    return getenv("BABASHKA_POD") == "true";
+  }
+
+  static bool is_babashka_transport_socket()
+  {
+    return getenv("BABASHKA_POD_TRANSPORT") == "socket";
+  }
+
+  template <typename T>
   class Encoder
   {
   public:
-    std::string format()
-    {
-      return "json";
-    }
-
-    std::string encode(json const &d)
-    {
-      return d.dump();
-    }
-
-    std::string encode(std::vector<std::string> const &statuses)
-    {
-      return json(statuses).dump();
-    }
-
-    json decode(std::string const &s)
-    {
-      return json::parse(s);
-    }
+    virtual ~Encoder() = default;
+    virtual std::string format() = 0;
+    virtual std::string encode(T const &d) = 0;
+    virtual std::string encode(std::vector<std::string> const &statuses) = 0;
+    virtual T decode(std::string const &s) = 0;
   };
 
   class Transport
@@ -92,18 +93,20 @@ namespace lotuc::pod
     }
   };
 
+  template <typename T>
   class Var;
 
+  template <typename T>
   class Context
   {
   public:
     std::string _pod_id;
-    std::unique_ptr<Encoder> _encoder;
+    std::unique_ptr<Encoder<T>> _encoder;
     std::unique_ptr<Transport> _transport;
     std::function<void()> _cleanup;
-    std::map<std::string, std::unique_ptr<Var>> _vars;
+    std::map<std::string, std::unique_ptr<Var<T>>> _vars;
 
-    Context(std::unique_ptr<Encoder> encoder,
+    Context(std::unique_ptr<Encoder<T>> encoder,
             std::unique_ptr<Transport> transport,
             std::function<void()> cleanup)
       : _pod_id{}
@@ -114,7 +117,7 @@ namespace lotuc::pod
     }
 
     Context(std::string &pod_id,
-            std::unique_ptr<Encoder> encoder,
+            std::unique_ptr<Encoder<T>> encoder,
             std::unique_ptr<Transport> transport,
             std::function<void()> cleanup)
       : _pod_id{ pod_id }
@@ -125,33 +128,49 @@ namespace lotuc::pod
     }
 
     void cleanup() const;
-    void add_var(std::unique_ptr<Var> var);
-    Var *find_var(std::string const &qualified_name);
+    void add_var(std::unique_ptr<Var<T>> var);
+    Var<T> *find_var(std::string const &qualified_name);
     bc::data describe();
+
+    void send_err(std::string const &id, std::string const &msg) const
+    {
+      _transport->send_err(id, msg);
+    }
+
+    void send_out(std::string const &id, std::string const &msg) const
+    {
+      _transport->send_out(id, msg);
+    }
+
+    void send_invoke_failure(std::string const &id,
+                             std::string const &ex_message,
+                             T const &ex_data,
+                             std::vector<std::string> const &status) const
+    {
+      _transport->send_invoke_failure(id,
+                                      ex_message,
+                                      _encoder->encode(ex_data),
+                                      _encoder->encode(status));
+    }
+
+    void send_invoke_callback(std::string const &id, T const &value) const
+    {
+      _transport->send_invoke_callback(id, _encoder->encode(value));
+    }
+
+    void send_invoke_success(std::string const &id, T const &value) const
+    {
+      _transport->send_invoke_success(id, _encoder->encode(value));
+    }
   };
 
+  template <typename T>
   class Pod
   {
   public:
-    static std::string getenv(std::string const &n)
-    {
-      char const *s = ::getenv(n.c_str());
-      return s ? s : "";
-    }
+    Context<T> &ctx;
 
-    static bool is_babashka_pod_env()
-    {
-      return getenv("BABASHKA_POD") == "true";
-    }
-
-    static bool is_babashka_transport_socket()
-    {
-      return getenv("BABASHKA_POD_TRANSPORT") == "socket";
-    }
-
-    Context &ctx;
-
-    Pod(Context &ctx)
+    Pod(Context<T> &ctx)
       : ctx{ ctx }
     {
     }
@@ -159,6 +178,7 @@ namespace lotuc::pod
     void start();
   };
 
+  template <typename T>
   class Var
   {
   public:
@@ -174,15 +194,17 @@ namespace lotuc::pod
       return "";
     }
 
-    virtual void invoke(Context const &ctx, std::string const &id, json const &args) = 0;
+    virtual void invoke(Context<T> const &ctx, std::string const &id, T const &args) = 0;
   };
 
-  inline void Context::add_var(std::unique_ptr<Var> var)
+  template <typename T>
+  inline void Context<T>::add_var(std::unique_ptr<Var<T>> var)
   {
     _vars[var->ns() + "/" + var->name()] = std::move(var);
   }
 
-  inline void Context::cleanup() const
+  template <typename T>
+  inline void Context<T>::cleanup() const
   {
     if(_cleanup)
     {
@@ -190,16 +212,22 @@ namespace lotuc::pod
     }
   }
 
-  inline Var *Context::find_var(std::string const &qualified_name)
+  template <typename T>
+  inline Var<T> *Context<T>::find_var(std::string const &qualified_name)
   {
-    if(_vars.contains(qualified_name))
+    auto v = _vars.find(qualified_name);
+    if(v != _vars.end())
     {
-      return _vars[qualified_name].get();
+      return v->second.get();
     }
-    return nullptr;
+    else
+    {
+      return nullptr;
+    }
   }
 
-  inline bc::data Context::describe()
+  template <typename T>
+  inline bc::data Context<T>::describe()
   {
     bc::dict ops;
     {
@@ -251,7 +279,8 @@ namespace lotuc::pod
     };
   }
 
-  inline void Pod::start()
+  template <typename T>
+  inline void Pod<T>::start()
   {
     while(true)
     {
@@ -268,7 +297,7 @@ namespace lotuc::pod
         auto qn = std::get<std::string>(d["var"]);
         auto _args = std::get<std::string>(d["args"]);
 
-        if(Var *var = ctx.find_var(qn); var)
+        if(Var<T> *var = ctx.find_var(qn); var)
         {
           auto args = ctx._encoder->decode(_args);
           var->invoke(ctx, id, args);
