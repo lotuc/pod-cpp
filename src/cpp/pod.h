@@ -127,21 +127,56 @@ namespace lotuc::pod
     {
     }
 
+    /** https://github.com/babashka/pods?tab=readme-ov-file#describe
+     *
+     * If the pod supports `shutdown` op, we can customize the `cleanup`
+     * function on `shutdown`.
+     */
+    //
     void cleanup() const;
+
+    /** https://github.com/babashka/pods?tab=readme-ov-file#describe
+     *
+     * vars have two parts, `ns`, `name`, it can be invoked via qualified name
+     * `<ns>/<name>`.
+     */
     void add_var(std::unique_ptr<Var<T>> var);
+
+    /** find the `Var` by the qualified name. */
     Var<T> *find_var(std::string const &qualified_name);
+
+    /** https://github.com/babashka/pods?tab=readme-ov-file#describe
+     *
+     * Returns the description info.
+     *
+     * Current implementation of pod uses the first namespace's name as the
+     * loaded `pod-id`. It's not a documented behavior, but here we're utilizing
+     * it for customizing `pod-id`.
+     */
     bc::data describe();
 
+    /** https://github.com/babashka/pods?tab=readme-ov-file#out-and-err
+     *
+     * Sending message to stderr.
+     */
     void send_err(std::string const &id, std::string const &msg) const
     {
       _transport->send_err(id, msg);
     }
 
+    /** https://github.com/babashka/pods?tab=readme-ov-file#out-and-err
+     *
+     * Sending message to stdout.
+     */
     void send_out(std::string const &id, std::string const &msg) const
     {
       _transport->send_out(id, msg);
     }
 
+    /** https://github.com/babashka/pods?tab=readme-ov-file#error-handling
+     *
+     * Sending invoke failure response.
+     */
     void send_invoke_failure(std::string const &id,
                              std::string const &ex_message,
                              T const &ex_data,
@@ -153,14 +188,23 @@ namespace lotuc::pod
                                       _encoder->encode(status));
     }
 
-    void send_invoke_callback(std::string const &id, T const &value) const
-    {
-      _transport->send_invoke_callback(id, _encoder->encode(value));
-    }
-
+    /** https://github.com/babashka/pods?tab=readme-ov-file#invoke
+     *
+     * Sending invoke success response.
+     */
     void send_invoke_success(std::string const &id, T const &value) const
     {
       _transport->send_invoke_success(id, _encoder->encode(value));
+    }
+
+    /** https://github.com/babashka/pods?tab=readme-ov-file#invoke
+     *
+     * Sending invoke callbacks. The callback response is a success response
+     * empty `status` set.
+     */
+    void send_invoke_callback(std::string const &id, T const &value) const
+    {
+      _transport->send_invoke_callback(id, _encoder->encode(value));
     }
   };
 
