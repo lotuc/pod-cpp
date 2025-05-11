@@ -1,31 +1,56 @@
-#include "pod.h"
-#include "pod_asio.h"
 #include "pod_helper.h"
 
 #include <memory>
 
-define_pod_var_(json, pod_test_pod_add_sync, "pod.test-pod", "add-sync");
+define_pod_var_deref(json, pod_test_pod_add_sync, "pod.test-pod", "add-sync", "");
 
-void pod_test_pod_add_sync::invoke(lotuc::pod::Context<json> const &ctx,
-                                   std::string const &id,
-                                   json const &args)
+void pod_test_pod_add_sync::derefer::deref()
 {
   int r{};
-  for(auto a : args)
+  for(auto const &a : args)
   {
     r += a.get<int>();
   }
-  json ret = r;
-  ctx.send_invoke_success(id, ret);
+  ctx.send_invoke_success(id, r);
 }
 
-define_pod_var(json, echo, echo);
+// https://github.com/babashka/pods/blob/master/test-pod/pod/test_pod.clj
+define_pod_var_deref1(json, test_pod, echo, "");
+define_pod_var_deref1(json, test_pod, error, "");
+define_pod_var_deref1(json, test_pod, print, "");
+define_pod_var_deref1(json, test_pod, print_err, "");
+define_pod_var_deref1(json, test_pod, return_nil, "");
+define_pod_var_code1(json, test_pod, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
+define_pod_var_code1(json, test_pod, fn_call, "", "(defn fn-call [f x] (f x))");
 
-void echo_echo::invoke(lotuc::pod::Context<json> const &ctx,
-                       std::string const &id,
-                       json const &args)
+void test_pod_echo::derefer::deref()
 {
   ctx.send_invoke_success(id, args[0]);
+}
+
+void test_pod_error::derefer::deref()
+{
+  json ex_data = {
+    { "args", args }
+  };
+  ctx.send_invoke_failure(id, "Illegal arguments", ex_data);
+}
+
+void test_pod_print::derefer::deref()
+{
+  ctx.send_out(id, args.dump() + "\n");
+  ctx.send_invoke_success(id, {});
+}
+
+void test_pod_print_err::derefer::deref()
+{
+  ctx.send_err(id, args.dump() + "\n");
+  ctx.send_invoke_success(id, {});
+}
+
+void test_pod_return_nil::derefer::deref()
+{
+  ctx.send_invoke_success(id, {});
 }
 
 int main(int argc, char **argv)
@@ -44,7 +69,14 @@ int main(int argc, char **argv)
   std::unique_ptr<pod::Context<json>> ctx = pod::build_json_ctx(pod_id);
 
   ctx->add_var(std::make_unique<pod_test_pod_add_sync>());
-  ctx->add_var(std::make_unique<echo_echo>());
+  ctx->add_var(std::make_unique<test_pod_error>());
+  ctx->add_var(std::make_unique<test_pod_echo>());
+  ctx->add_var(std::make_unique<test_pod_error>());
+  ctx->add_var(std::make_unique<test_pod_print>());
+  ctx->add_var(std::make_unique<test_pod_print_err>());
+  ctx->add_var(std::make_unique<test_pod_return_nil>());
+  ctx->add_var(std::make_unique<test_pod_do_twice>());
+  ctx->add_var(std::make_unique<test_pod_fn_call>());
 
   pod::Pod<json> pod_{ *ctx };
   pod_.start();

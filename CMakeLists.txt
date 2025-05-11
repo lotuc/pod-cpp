@@ -4,7 +4,6 @@ project(pod-cpp)
 set(CMAKE_CXX_STANDARD 20)
 
 find_package(nlohmann_json REQUIRED)
-find_package(Immer REQUIRED)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(asio REQUIRED asio)
@@ -15,5 +14,6 @@ include_directories(
 )
 
 add_executable(test_pod src-dev/cpp/test_pod.cpp src/cpp/pod.h)
-target_link_libraries(test_pod PUBLIC immer nlohmann_json::nlohmann_json)
-target_include_directories(test_pod PUBLIC asio_INCLUDE_DIRS)
+target_link_libraries(test_pod PUBLIC nlohmann_json::nlohmann_json)
+target_include_directories
+(test_pod PUBLIC asio_INCLUDE_DIRS)

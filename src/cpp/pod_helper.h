@@ -2,21 +2,66 @@
 #include "pod_asio.h"
 #include "pod_json.h"
 
-#define define_pod_var_(T, _class_name, _ns, _name)                                                \
-  class _class_name : public lotuc::pod::Var<T>                                                    \
-  {                                                                                                \
-    std::string ns() override                                                                      \
-    {                                                                                              \
-      return _ns;                                                                                  \
-    }                                                                                              \
-    std::string name() override                                                                    \
-    {                                                                                              \
-      return _name;                                                                                \
-    }                                                                                              \
-    void invoke(lotuc::pod::Context<T> const &ctx, std::string const &id, T const &args) override; \
+#define define_pod_var_code(T, _class_name, _ns, _name, _meta, _code)                        \
+  class _class_name : public lotuc::pod::Var<T>                                              \
+  {                                                                                          \
+    std::string ns() override                                                                \
+    {                                                                                        \
+      return _ns;                                                                            \
+    }                                                                                        \
+    std::string name() override                                                              \
+    {                                                                                        \
+      return _name;                                                                          \
+    }                                                                                        \
+    std::string code() override                                                              \
+    {                                                                                        \
+      return _code;                                                                          \
+    }                                                                                        \
+    std::string meta() override                                                              \
+    {                                                                                        \
+      return _meta;                                                                          \
+    }                                                                                        \
+    std::unique_ptr<lotuc::pod::Var<T>::derefer>                                             \
+    make_derefer(lotuc::pod::Context<T> &ctx, std::string const &id, T const &args) override \
+    {                                                                                        \
+      throw std::runtime_error{ "code var" };                                                \
+    }                                                                                        \
   }
 
-#define define_pod_var(T, _ns, _name) define_pod_var_(T, _ns##_##_name, #_ns, #_name)
+#define define_pod_var_deref(T, _class_name, _ns, _name, _meta)                              \
+  class _class_name : public lotuc::pod::Var<T>                                              \
+  {                                                                                          \
+    std::string ns() override                                                                \
+    {                                                                                        \
+      return _ns;                                                                            \
+    }                                                                                        \
+    std::string name() override                                                              \
+    {                                                                                        \
+      return _name;                                                                          \
+    }                                                                                        \
+    std::string meta() override                                                              \
+    {                                                                                        \
+      return _meta;                                                                          \
+    }                                                                                        \
+                                                                                             \
+    class derefer : public lotuc::pod::Var<T>::derefer                                       \
+    {                                                                                        \
+      using lotuc::pod::Var<T>::derefer::derefer;                                            \
+      void deref() override;                                                                 \
+    };                                                                                       \
+                                                                                             \
+    std::unique_ptr<lotuc::pod::Var<T>::derefer>                                             \
+    make_derefer(lotuc::pod::Context<T> &ctx, std::string const &id, T const &args) override \
+    {                                                                                        \
+      return std::make_unique<derefer>(ctx, id, args);                                       \
+    }                                                                                        \
+  }
+
+#define define_pod_var_code1(T, _ns, _name, _meta, _code) \
+  define_pod_var_code(T, _ns##_##_name, #_ns, #_name, _meta, _code)
+
+#define define_pod_var_deref1(T, _ns, _name, _meta) \
+  define_pod_var_deref(T, _ns##_##_name, #_ns, #_name, _meta)
 
 namespace lotuc::pod
 {

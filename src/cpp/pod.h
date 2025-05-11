@@ -9,6 +9,13 @@
 
 namespace bc = bencode;
 
+// TODO
+// 1. Metadata: https://github.com/babashka/pods?tab=readme-ov-file#metadata
+//    - Dynamic metadata
+//    - From pod client to pod
+// 2. Deferred namespace loading: https://github.com/babashka/pods?tab=readme-ov-file#deferred-namespace-loading
+// 3. readers: https://github.com/babashka/pods?tab=readme-ov-file#readers
+
 namespace lotuc::pod
 {
   static std::string getenv(std::string const &n)
@@ -63,14 +70,13 @@ namespace lotuc::pod
 
     void send_invoke_failure(std::string const &id,
                              std::string const &ex_message,
-                             bc::data const &ex_data,
-                             bc::list const &status)
+                             bc::data const &ex_data)
     {
       write(bc::dict{
-        {         "id",         id },
-        { "ex-message", ex_message },
-        {    "ex-data",    ex_data },
-        {     "status",     status }
+        {         "id",                          id },
+        { "ex-message",                  ex_message },
+        {    "ex-data",                     ex_data },
+        {     "status", bc::list{ "done", "error" } }
       });
     }
 
@@ -79,16 +85,16 @@ namespace lotuc::pod
       write(bc::dict{
         {     "id",         id },
         {  "value",      value },
-        { "status", bc::list() }
+        { "status", bc::list{} }
       });
     }
 
     void send_invoke_success(std::string const &id, bc::data const &value)
     {
       write(bc::dict{
-        {     "id",                   id },
-        {  "value",                value },
-        { "status", bc::list({ "done" }) }
+        {     "id",                 id },
+        {  "value",              value },
+        { "status", bc::list{ "done" } }
       });
     }
   };
@@ -179,13 +185,9 @@ namespace lotuc::pod
      */
     void send_invoke_failure(std::string const &id,
                              std::string const &ex_message,
-                             T const &ex_data,
-                             std::vector<std::string> const &status) const
+                             T const &ex_data) const
     {
-      _transport->send_invoke_failure(id,
-                                      ex_message,
-                                      _encoder->encode(ex_data),
-                                      _encoder->encode(status));
+      _transport->send_invoke_failure(id, ex_message, _encoder->encode(ex_data));
     }
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#invoke
@@ -208,6 +210,7 @@ namespace lotuc::pod
     }
   };
 
+  /** A simple pod implementation. */
   template <typename T>
   class Pod
   {
@@ -223,6 +226,20 @@ namespace lotuc::pod
   };
 
   template <typename T>
+  class VarInvoker
+  {
+  public:
+    Context<T> const &ctx;
+    std::string id;
+
+    VarInvoker(Context<T> const &ctx, std::string const &id)
+      : ctx(ctx)
+      , id(id)
+    {
+    }
+  };
+
+  template <typename T>
   class Var
   {
   public:
@@ -232,13 +249,45 @@ namespace lotuc::pod
 
     virtual std::string name() = 0;
 
-    // edn string
+    /** https://github.com/babashka/pods?tab=readme-ov-file#client-side-code
+     *
+     * Arbitrary code which will be executed under namespace `ns`.
+     */
+    virtual std::string code()
+    {
+      return "";
+    }
+
+    /** https://github.com/babashka/pods?tab=readme-ov-file#metadata
+     *
+     * Fixed Metadata on vars
+     */
     virtual std::string meta()
     {
       return "";
     }
 
-    virtual void invoke(Context<T> const &ctx, std::string const &id, T const &args) = 0;
+    class derefer
+    {
+    public:
+      Context<T> &ctx;
+      std::string id;
+      T args;
+
+      derefer(Context<T> &ctx, std::string const &id, T const &args)
+        : ctx(ctx)
+        , id(id)
+        , args(args)
+      {
+      }
+
+      virtual ~derefer() = default;
+
+      virtual void deref() = 0;
+    };
+
+    virtual std::unique_ptr<derefer>
+    make_derefer(Context<T> &ctx, std::string const &id, T const &args) = 0;
   };
 
   template <typename T>
@@ -293,10 +342,15 @@ namespace lotuc::pod
       }
       for(auto const &v : _vars)
       {
-        ns_vars[v.second->ns()].emplace_back(bc::dict{
+        auto v_ = bc::dict{
           { "name", v.second->name() },
           { "meta", v.second->meta() }
-        });
+        };
+        if(!v.second->code().empty())
+        {
+          v_["code"] = v.second->code();
+        };
+        ns_vars[v.second->ns()].emplace_back(v_);
       }
       // the first namespace returned is pod-id
       if(!_pod_id.empty())
@@ -329,7 +383,7 @@ namespace lotuc::pod
     while(true)
     {
       auto d = ctx._transport->read();
-      auto op = std::get<std::string>(d["op"]);
+      auto op = std::get<bc::string>(d["op"]);
       if(op == "describe")
       {
         auto v = ctx.describe();
@@ -337,23 +391,39 @@ namespace lotuc::pod
       }
       else if(op == "invoke")
       {
-        auto id = std::get<std::string>(d["id"]);
-        auto qn = std::get<std::string>(d["var"]);
-        auto _args = std::get<std::string>(d["args"]);
-
-        if(Var<T> *var = ctx.find_var(qn); var)
+        auto id = std::get<bc::string>(d["id"]);
+        auto qn = std::get<bc::string>(d["var"]);
+        try
         {
-          auto args = ctx._encoder->decode(_args);
-          var->invoke(ctx, id, args);
+          auto _args = std::get<bc::string>(d["args"]);
+          if(Var<T> *var = ctx.find_var(qn); var)
+          {
+            auto args = ctx._encoder->decode(_args);
+            auto derefer = var->make_derefer(ctx, id, args);
+            derefer->deref();
+          }
+          else
+          {
+            ctx.send_err(id, "var not found");
+          }
         }
-        else
+        catch(std::exception const &e)
         {
-          ctx._transport->send_err(id, "var not found");
+          ctx._transport->send_invoke_failure(id, e.what(), bc::dict{});
+        }
+        catch(...)
+        {
+          ctx._transport->send_invoke_failure(id, "unkown exception", bc::dict{});
+          throw;
         }
       }
       else if(op == "shutdown")
       {
         ctx.cleanup();
+        break;
+      }
+      else
+      {
         break;
       }
     }

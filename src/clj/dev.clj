@@ -24,25 +24,27 @@
         (b/write-bencode v))
       .toString))
 
+(defn shut-dev-process []
+  (when-some [v (resolve 'dev-process)]
+    (when (bound? v) (p/destroy-tree @v))))
+
 #_{:clj-kondo/ignore [:inline-def]}
-(defn _init []
-  (when-some [v (resolve 'a)] (when (bound? v) (p/destroy-tree @v)))
+(defn restart-dev-process []
+  (def dev-process (apply p/process test-pod))
 
-  (def a (apply p/process test-pod))
-
-  (def !f
+  (def !dev-echo
     (future
-      (with-open [in (java.io.PushbackInputStream. (:out a))]
+      (with-open [in (java.io.PushbackInputStream. (:out dev-process))]
         (loop []
           (prn (clojure.walk/postwalk
                 (fn [v] (if (bytes? v) (String. v "UTF-8") v))
                 (b/read-bencode in)))
           (recur)))))
 
-  (def out (io/writer (:in a)))
+  (def dev-out (io/writer (:in dev-process)))
 
   (defn w [d]
-    (binding [*out* out]
+    (binding [*out* dev-out]
       (print (to-netstring d))
       (flush))))
 
@@ -53,26 +55,40 @@
 
   (pod.test-pod/add-sync 1 2 3)
 
-  (echo/echo 42)
-  (echo/echo "hello world")
-  (echo/echo ["hello" "world"])
+  (test_pod/error "hello")
+  (test_pod/echo 42)
+  (test_pod/echo "hello world")
+  (test_pod/echo ["hello" "world"])
 
-  (doseq [i (range 100)]
-    (future (println (echo/echo i))))
+  (test_pod/return_nil)
+  (test_pod/print "hello")
+  (test_pod/print "hello" "world")
+  (test_pod/print_err "hello")
+  (test_pod/print_err "hello" "world")
+  (test_pod/do-twice (println "hello"))
+  (test_pod/fn-call (fn [x] (+ x 42)) 24)
 
   (to-netstring {:op "describe"})
   "d2:op8:describee"
 
-  (_init)
+  (shut-dev-process)
+  (restart-dev-process)
   (w {:op "describe"})
-  (w {:op "invoke"
-      :id "4"
-      :var "echo/echo"
-      :args (json/generate-string ["hello"])})
+  (w {:op "invoke" :id "42" :var "test_pod/echo"
+      :args (json/generate-string ["hello world"])})
 
-  (w {:op "invoke"
-      :id "4"
-      :var "echo/echo"
+  (w {:op "invoke" :id "42" :var "test_pod/echo"
       :args (json/generate-string [])})
+
+  (w {:op "invoke" :id "42" :var "test_pod/error"
+      :args (json/generate-string [])})
+
+  (to-netstring {:op "invoke" :id "42" :var "test_pod/echo"
+                 :args (json/generate-string [])})
+  "d4:args2:[]2:id2:422:op6:invoke3:var13:test_pod/echoe"
+
+  (to-netstring {:op "invoke" :id "42" :var "test_pod/error"
+                 :args (json/generate-string [])})
+  "d4:args2:[]2:id2:422:op6:invoke3:var14:test_pod/errore"
 
   #_())
