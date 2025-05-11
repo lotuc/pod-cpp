@@ -7,6 +7,8 @@
 (require '[clojure.walk])
 (require '[babashka.pods :as pods])
 
+(def test-pod ["./build/test_pod"])
+
 (defn string->stream
   ([s] (string->stream s "UTF-8"))
   ([s encoding]
@@ -22,33 +24,46 @@
         (b/write-bencode v))
       .toString))
 
-(let [v (resolve 'a)] (when (bound? v) (p/destroy-tree @v)))
+#_{:clj-kondo/ignore [:inline-def]}
+(defn _init []
+  (when-some [v (resolve 'a)] (when (bound? v) (p/destroy-tree @v)))
 
-(def a (p/process "./build/example"))
+  (def a (apply p/process test-pod))
 
-(def !f
-  (future
-    (with-open [in (java.io.PushbackInputStream. (:out a))]
-      (loop []
-        (prn (clojure.walk/postwalk
-              (fn [v] (if (bytes? v) (String. v "UTF-8") v))
-              (b/read-bencode in)))
-        (recur)))))
+  (def !f
+    (future
+      (with-open [in (java.io.PushbackInputStream. (:out a))]
+        (loop []
+          (prn (clojure.walk/postwalk
+                (fn [v] (if (bytes? v) (String. v "UTF-8") v))
+                (b/read-bencode in)))
+          (recur)))))
 
-(def out (io/writer (:in a)))
+  (def out (io/writer (:in a)))
 
-(defn w [d]
-  (binding [*out* out]
-    (print (to-netstring d))
-    (flush)))
-
-(pods/load-pod "./build/example")
+  (defn w [d]
+    (binding [*out* out]
+      (print (to-netstring d))
+      (flush))))
 
 (comment
+  (def pod-id (pods/load-pod test-pod {:transport :socket}))
+  (def pod-id (pods/load-pod test-pod))
+  (pods/unload-pod pod-id)
+
+  (pod.test-pod/add-sync 1 2 3)
+
   (echo/echo 42)
   (echo/echo "hello world")
   (echo/echo ["hello" "world"])
 
+  (doseq [i (range 100)]
+    (future (println (echo/echo i))))
+
+  (to-netstring {:op "describe"})
+  "d2:op8:describee"
+
+  (_init)
   (w {:op "describe"})
   (w {:op "invoke"
       :id "4"
