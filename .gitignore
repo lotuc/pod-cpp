@@ -1,0 +1,45 @@
+a.out
+
+/.ycm_extra_conf.py*
+/.lsp
+/.dir-locals.el
+
+# lein
+target
+classes
+/checkouts
+pom.xml
+pom.xml.asc
+*.jar
+*.class
+/.lein-*
+.hgignore
+.hg/
+.clj-kondo
+.nrepl-port
+
+# C++
+.ccls-cache
+.gdb_history
+.cache
+.cpcache
+inst
+deb-cache
+build
+build-*
+coverage.txt
+vcpkg_installed
+.idea/
+.vs/
+.vscode/
+cmake-build-*/
+prefix/
+CMakeLists.txt.user
+CMakeUserPresets.json
+
+# secrets
+.github_access_token
+
+# CI thingies
+/llvm.sh
+/linux-install.sh

@@ -1,0 +1,3 @@
+[submodule "thirdparty/bencode.hpp"]
+	path = thirdparty/bencode.hpp
+	url = https://github.com/jimporter/bencode.hpp
