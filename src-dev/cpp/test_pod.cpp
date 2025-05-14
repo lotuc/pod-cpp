@@ -1,56 +1,88 @@
+#include "pod.h"
 #include "pod_helper.h"
 
 #include <memory>
 
-define_pod_var_deref(json, pod_test_pod_add_sync, "pod.test-pod", "add-sync", "");
-
-void pod_test_pod_add_sync::derefer::deref()
-{
-  int r{};
-  for(auto const &a : args)
-  {
-    r += a.get<int>();
-  }
-  ctx.send_invoke_success(id, r);
-}
-
 // https://github.com/babashka/pods/blob/master/test-pod/pod/test_pod.clj
-define_pod_var_deref1(json, test_pod, echo, "");
-define_pod_var_deref1(json, test_pod, error, "");
-define_pod_var_deref1(json, test_pod, print, "");
-define_pod_var_deref1(json, test_pod, print_err, "");
-define_pod_var_deref1(json, test_pod, return_nil, "");
-define_pod_var_code1(json, test_pod, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
-define_pod_var_code1(json, test_pod, fn_call, "", "(defn fn-call [f x] (f x))");
-
-void test_pod_echo::derefer::deref()
+namespace test_pod
 {
-  ctx.send_invoke_success(id, args[0]);
+  define_pod_var_deref(json, add_sync, "add-sync", "");
+  define_pod_var_deref1(json, echo, "");
+  define_pod_var_deref1(json, error, "");
+  define_pod_var_deref1(json, print, "");
+  define_pod_var_deref1(json, print_err, "");
+  define_pod_var_deref1(json, return_nil, "");
+  define_pod_var_code1(json, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
+  define_pod_var_code1(json, fn_call, "", "(defn fn-call [f x] (f x))");
+
+  static void load_vars(lotuc::pod::Namespace<json> &ns)
+  {
+    std::cerr << "\n\nloading vars: " << ns._name << "\n\n";
+    ns.add_var(std::make_unique<add_sync>());
+    ns.add_var(std::make_unique<error>());
+    ns.add_var(std::make_unique<echo>());
+    ns.add_var(std::make_unique<error>());
+    ns.add_var(std::make_unique<print>());
+    ns.add_var(std::make_unique<print_err>());
+    ns.add_var(std::make_unique<return_nil>());
+    ns.add_var(std::make_unique<do_twice>());
+    ns.add_var(std::make_unique<fn_call>());
+  }
+
+  static std::unique_ptr<lotuc::pod::Namespace<json>> build_ns()
+  {
+    auto ns = std::make_unique<lotuc::pod::Namespace<json>>("test-pod");
+    load_vars(*ns);
+    return ns;
+  }
+
+  static std::unique_ptr<lotuc::pod::Namespace<json>> build_defer_ns()
+  {
+    return std::make_unique<lotuc::pod::Namespace<json>>("test-pod-defer", true, load_vars);
+  }
 }
 
-void test_pod_error::derefer::deref()
+namespace test_pod
 {
-  json ex_data = {
-    { "args", args }
-  };
-  ctx.send_invoke_failure(id, "Illegal arguments", ex_data);
-}
+  void add_sync::derefer::deref()
+  {
+    int r{};
+    for(auto const &a : args)
+    {
+      r += a.get<int>();
+    }
+    ctx.send_invoke_success(id, r);
+  }
 
-void test_pod_print::derefer::deref()
-{
-  ctx.send_out(id, args.dump() + "\n");
-  ctx.send_invoke_success(id, {});
-}
+  void echo::derefer::deref()
+  {
+    ctx.send_invoke_success(id, args[0]);
+  }
 
-void test_pod_print_err::derefer::deref()
-{
-  ctx.send_err(id, args.dump() + "\n");
-  ctx.send_invoke_success(id, {});
-}
+  void error::derefer::deref()
+  {
+    json ex_data = {
+      { "args", args }
+    };
+    ctx.send_invoke_failure(id, "Illegal arguments", ex_data);
+  }
 
-void test_pod_return_nil::derefer::deref()
-{
-  ctx.send_invoke_success(id, {});
+  void print::derefer::deref()
+  {
+    ctx.send_out(id, args.dump() + "\n");
+    ctx.send_invoke_success(id, {});
+  }
+
+  void print_err::derefer::deref()
+  {
+    ctx.send_err(id, args.dump() + "\n");
+    ctx.send_invoke_success(id, {});
+  }
+
+  void return_nil::derefer::deref()
+  {
+    ctx.send_invoke_success(id, {});
+  }
 }
 
 int main(int argc, char **argv)
@@ -67,16 +99,9 @@ int main(int argc, char **argv)
   }
 
   std::unique_ptr<pod::Context<json>> ctx = pod::build_json_ctx(pod_id);
-
-  ctx->add_var(std::make_unique<pod_test_pod_add_sync>());
-  ctx->add_var(std::make_unique<test_pod_error>());
-  ctx->add_var(std::make_unique<test_pod_echo>());
-  ctx->add_var(std::make_unique<test_pod_error>());
-  ctx->add_var(std::make_unique<test_pod_print>());
-  ctx->add_var(std::make_unique<test_pod_print_err>());
-  ctx->add_var(std::make_unique<test_pod_return_nil>());
-  ctx->add_var(std::make_unique<test_pod_do_twice>());
-  ctx->add_var(std::make_unique<test_pod_fn_call>());
+  ctx->add_ns(test_pod::build_ns());
+  ctx->add_ns(test_pod::build_defer_ns());
+  ctx->describe();
 
   pod::Pod<json> pod_{ *ctx };
   pod_.start();

@@ -3,9 +3,13 @@
 
 #include "bencode.hpp"
 
+#include <cstddef>
+#include <map>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace bc = bencode;
 
@@ -13,8 +17,7 @@ namespace bc = bencode;
 // 1. Metadata: https://github.com/babashka/pods?tab=readme-ov-file#metadata
 //    - Dynamic metadata
 //    - From pod client to pod
-// 2. Deferred namespace loading: https://github.com/babashka/pods?tab=readme-ov-file#deferred-namespace-loading
-// 3. readers: https://github.com/babashka/pods?tab=readme-ov-file#readers
+// 2. readers: https://github.com/babashka/pods?tab=readme-ov-file#readers
 
 namespace lotuc::pod
 {
@@ -103,6 +106,38 @@ namespace lotuc::pod
   class Var;
 
   template <typename T>
+  class Namespace
+  {
+  public:
+    bool _defer;
+    std::function<void(Namespace<T> &)> _load_vars;
+    std::string _name;
+    std::vector<std::string> _var_names;
+    std::map<std::string, std::unique_ptr<Var<T>>> _vars;
+    void add_var(std::unique_ptr<Var<T>> var);
+
+    bc::data describe();
+    bc::data describe(bool force);
+
+    Namespace(std::string const &name)
+      : _name(name)
+      , _defer{ false }
+    {
+    }
+
+    Namespace(std::string const &name, bool defer, std::function<void(Namespace<T> &)> load_vars)
+      : _name(name)
+      , _defer{ defer }
+      , _load_vars{ load_vars }
+    {
+      if(!defer)
+      {
+        _load_vars(*this);
+      }
+    }
+  };
+
+  template <typename T>
   class Context
   {
   public:
@@ -110,6 +145,10 @@ namespace lotuc::pod
     std::unique_ptr<Encoder<T>> _encoder;
     std::unique_ptr<Transport> _transport;
     std::function<void()> _cleanup;
+
+    std::vector<std::string> _ns_names;
+    std::map<std::string, std::unique_ptr<Namespace<T>>> _ns;
+
     std::map<std::string, std::unique_ptr<Var<T>>> _vars;
 
     Context(std::unique_ptr<Encoder<T>> encoder,
@@ -146,10 +185,13 @@ namespace lotuc::pod
      * vars have two parts, `ns`, `name`, it can be invoked via qualified name
      * `<ns>/<name>`.
      */
-    void add_var(std::unique_ptr<Var<T>> var);
+    void add_ns(std::unique_ptr<Namespace<T>> ns);
 
     /** find the `Var` by the qualified name. */
     Var<T> *find_var(std::string const &qualified_name);
+
+    /** find namespace by its name. */
+    Namespace<T> *find_ns(std::string const &name);
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#describe
      *
@@ -245,8 +287,6 @@ namespace lotuc::pod
   public:
     virtual ~Var() = default;
 
-    virtual std::string ns() = 0;
-
     virtual std::string name() = 0;
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#client-side-code
@@ -265,6 +305,22 @@ namespace lotuc::pod
     virtual std::string meta()
     {
       return "";
+    }
+
+    bc::data describe()
+    {
+      auto v = bc::dict{
+        { "name", name() }
+      };
+      if(!meta().empty())
+      {
+        v["meta"] = meta();
+      }
+      if(!code().empty())
+      {
+        v["code"] = code();
+      };
+      return v;
     }
 
     class derefer
@@ -291,9 +347,58 @@ namespace lotuc::pod
   };
 
   template <typename T>
-  inline void Context<T>::add_var(std::unique_ptr<Var<T>> var)
+  inline void Namespace<T>::add_var(std::unique_ptr<Var<T>> var)
   {
-    _vars[var->ns() + "/" + var->name()] = std::move(var);
+    auto n = var->name();
+    if(!_vars.contains(n))
+    {
+      _var_names.emplace_back(n);
+    }
+    _vars[n] = std::move(var);
+  }
+
+  template <typename T>
+  inline bc::data Namespace<T>::describe()
+  {
+    return describe(false);
+  }
+
+  template <typename T>
+  inline bc::data Namespace<T>::describe(bool force)
+  {
+    bc::dict v = bc::dict{
+      { "name", _name }
+    };
+    if(_defer && !force)
+    {
+      v["defer"] = "true";
+    }
+    else
+    {
+      if(_load_vars)
+      {
+        _load_vars(*this);
+      }
+      bc::list vars;
+      for(auto &n : _var_names)
+      {
+        std::unique_ptr<Var<T>> &var = _vars[n];
+        vars.emplace_back(var->describe());
+      }
+      v["vars"] = vars;
+    }
+    return v;
+  }
+
+  template <typename T>
+  inline void Context<T>::add_ns(std::unique_ptr<Namespace<T>> ns)
+  {
+    auto n = ns->_name;
+    if(!_ns.contains(n))
+    {
+      _ns_names.emplace_back(n);
+    }
+    _ns[n] = std::move(ns);
   }
 
   template <typename T>
@@ -306,17 +411,36 @@ namespace lotuc::pod
   }
 
   template <typename T>
+  inline Namespace<T> *Context<T>::find_ns(std::string const &name)
+  {
+    if(!_ns.contains(name))
+    {
+      throw std::runtime_error{ "namespace not found: " + name };
+    }
+    return _ns[name].get();
+  }
+
+  template <typename T>
   inline Var<T> *Context<T>::find_var(std::string const &qualified_name)
   {
-    auto v = _vars.find(qualified_name);
-    if(v != _vars.end())
+    auto pos = qualified_name.find('/');
+    if(pos == std::string::npos)
     {
-      return v->second.get();
+      throw std::runtime_error{ "invalid qualified name: " + qualified_name };
     }
-    else
+    auto _ns_name = qualified_name.substr(0, pos);
+    if(!_ns.contains(_ns_name))
     {
-      return nullptr;
+      throw std::runtime_error{ "namespace not found: " + qualified_name };
     }
+    std::unique_ptr<Namespace<T>> &ns = _ns[_ns_name];
+
+    auto _var_name = qualified_name.substr(pos + 1);
+    if(!ns->_vars.contains(_var_name))
+    {
+      throw std::runtime_error{ "namespace var not found: " + qualified_name };
+    }
+    return ns->_vars[_var_name].get();
   }
 
   template <typename T>
@@ -332,48 +456,37 @@ namespace lotuc::pod
       }
     }
 
-
-    bc::list ns;
+    bc::list namespaces;
     {
-      std::map<std::string, bc::list> ns_vars;
       if(!_pod_id.empty())
       {
-        ns_vars[_pod_id] = bc::list{};
-      }
-      for(auto const &v : _vars)
-      {
-        auto v_ = bc::dict{
-          { "name", v.second->name() },
-          { "meta", v.second->meta() }
-        };
-        if(!v.second->code().empty())
+        if(_ns.contains(_pod_id))
         {
-          v_["code"] = v.second->code();
-        };
-        ns_vars[v.second->ns()].emplace_back(v_);
+          std::unique_ptr<Namespace<T>> &ns = _ns[_pod_id];
+          namespaces.emplace_back(ns->describe());
+        }
+        else
+        {
+          namespaces.emplace_back(bc::dict{
+            { "name", _pod_id }
+          });
+        }
       }
-      // the first namespace returned is pod-id
-      if(!_pod_id.empty())
+      for(auto &n : _ns_names)
       {
-        ns.emplace_back(bc::dict{
-          { "name",          _pod_id },
-          { "vars", ns_vars[_pod_id] }
-        });
-        ns_vars.erase(_pod_id);
-      }
-      for(auto v : ns_vars)
-      {
-        ns.emplace_back(bc::dict{
-          { "name",  v.first },
-          { "vars", v.second }
-        });
+        if(n == _pod_id)
+        {
+          continue;
+        }
+        std::unique_ptr<Namespace<T>> &ns = _ns[n];
+        namespaces.emplace_back(ns->describe());
       }
     }
 
     return bc::dict{
       {     "format", _encoder->format() },
       {        "ops",                ops },
-      { "namespaces",                 ns }
+      { "namespaces",         namespaces }
     };
   }
 
@@ -416,6 +529,15 @@ namespace lotuc::pod
           ctx._transport->send_invoke_failure(id, "unkown exception", bc::dict{});
           throw;
         }
+      }
+      else if(op == "load-ns")
+      {
+        auto name = std::get<bc::string>(d["ns"]);
+        auto ns = ctx.find_ns(name);
+        auto r = ns->describe(true);
+        auto id = d["id"];
+        r["id"] = id;
+        ctx._transport->write(r);
       }
       else if(op == "shutdown")
       {

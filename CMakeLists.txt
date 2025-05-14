@@ -15,5 +15,4 @@ include_directories(
 
 add_executable(test_pod src-dev/cpp/test_pod.cpp src/cpp/pod.h)
 target_link_libraries(test_pod PUBLIC nlohmann_json::nlohmann_json)
-target_include_directories
-(test_pod PUBLIC asio_INCLUDE_DIRS)
+target_include_directories(test_pod PUBLIC asio_INCLUDE_DIRS)

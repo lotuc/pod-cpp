@@ -1,11 +1,10 @@
-(ns dev)
+(ns clj.dev-protocol)
 
 (require '[clojure.java.io :as io])
 (require '[bencode.core :as b])
 (require '[babashka.process :as p])
 (require '[cheshire.core :as json])
 (require '[clojure.walk])
-(require '[babashka.pods :as pods])
 
 (def test-pod ["./build/test_pod"])
 
@@ -49,24 +48,7 @@
       (flush))))
 
 (comment
-  (def pod-id (pods/load-pod test-pod {:transport :socket}))
-  (def pod-id (pods/load-pod test-pod))
-  (pods/unload-pod pod-id)
-
-  (pod.test-pod/add-sync 1 2 3)
-
-  (test_pod/error "hello")
-  (test_pod/echo 42)
-  (test_pod/echo "hello world")
-  (test_pod/echo ["hello" "world"])
-
-  (test_pod/return_nil)
-  (test_pod/print "hello")
-  (test_pod/print "hello" "world")
-  (test_pod/print_err "hello")
-  (test_pod/print_err "hello" "world")
-  (test_pod/do-twice (println "hello"))
-  (test_pod/fn-call (fn [x] (+ x 42)) 24)
+  dev-process
 
   (to-netstring {:op "describe"})
   "d2:op8:describee"
@@ -74,7 +56,14 @@
   (shut-dev-process)
   (restart-dev-process)
   (w {:op "describe"})
-  (w {:op "invoke" :id "42" :var "test_pod/echo"
+
+  (w {:op "load-ns" :ns "test-pod-defer"})
+
+  (to-netstring {:op "load-ns" :ns "test-pod-defer" :id "42"})
+  "d2:id2:422:ns14:test-pod-defer2:op7:load-nse"
+  "d2:ns14:test-pod-defer2:op7:load-nse"
+
+  (w {:op "invoke" :id "42" :var "test-pod/echo"
       :args (json/generate-string ["hello world"])})
 
   (w {:op "invoke" :id "42" :var "test_pod/echo"
@@ -82,6 +71,9 @@
 
   (w {:op "invoke" :id "42" :var "test_pod/error"
       :args (json/generate-string [])})
+
+  (to-netstring {:op "describe"})
+  "d2:op8:describee"
 
   (to-netstring {:op "invoke" :id "42" :var "test_pod/echo"
                  :args (json/generate-string [])})

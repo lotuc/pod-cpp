@@ -5,13 +5,9 @@
 #include "pod_asio.h"
 #include "pod_json.h"
 
-#define define_pod_var_code(T, _class_name, _ns, _name, _meta, _code)                        \
+#define define_pod_var_code(T, _class_name, _name, _meta, _code)                             \
   class _class_name : public lotuc::pod::Var<T>                                              \
   {                                                                                          \
-    std::string ns() override                                                                \
-    {                                                                                        \
-      return _ns;                                                                            \
-    }                                                                                        \
     std::string name() override                                                              \
     {                                                                                        \
       return _name;                                                                          \
@@ -31,13 +27,9 @@
     }                                                                                        \
   }
 
-#define define_pod_var_deref(T, _class_name, _ns, _name, _meta)                              \
+#define define_pod_var_deref(T, _class_name, _name, _meta)                                   \
   class _class_name : public lotuc::pod::Var<T>                                              \
   {                                                                                          \
-    std::string ns() override                                                                \
-    {                                                                                        \
-      return _ns;                                                                            \
-    }                                                                                        \
     std::string name() override                                                              \
     {                                                                                        \
       return _name;                                                                          \
@@ -60,11 +52,10 @@
     }                                                                                        \
   }
 
-#define define_pod_var_code1(T, _ns, _name, _meta, _code) \
-  define_pod_var_code(T, _ns##_##_name, #_ns, #_name, _meta, _code)
+#define define_pod_var_code1(T, _name, _meta, _code) \
+  define_pod_var_code(T, _name, #_name, _meta, _code)
 
-#define define_pod_var_deref1(T, _ns, _name, _meta) \
-  define_pod_var_deref(T, _ns##_##_name, #_ns, #_name, _meta)
+#define define_pod_var_deref1(T, _name, _meta) define_pod_var_deref(T, _name, #_name, _meta)
 
 namespace lotuc::pod
 {
