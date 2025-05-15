@@ -3,6 +3,8 @@
 
 #include <climits>
 #include <memory>
+#include <string>
+#include <vector>
 
 // https://github.com/babashka/pods/blob/master/test-pod/pod/test_pod.clj
 namespace test_pod
@@ -16,6 +18,7 @@ namespace test_pod
   define_pod_var_sync(json, return_nil, "");
   define_pod_var_code(json, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
   define_pod_var_code(json, fn_call, "", "(defn fn-call [f x] (f x))");
+  define_pod_var_sync(json, multi_threaded_test, "");
 
   static void load_vars(lotuc::pod::Namespace<json> &ns)
   {
@@ -29,6 +32,7 @@ namespace test_pod
     ns.add_var(std::make_unique<return_nil>());
     ns.add_var(std::make_unique<do_twice>());
     ns.add_var(std::make_unique<fn_call>());
+    ns.add_var(std::make_unique<multi_threaded_test>());
   }
 
   static std::unique_ptr<lotuc::pod::Namespace<json>> build_ns()
@@ -120,6 +124,28 @@ namespace test_pod
   void return_nil::derefer::deref()
   {
     ctx.send_invoke_success(id, {});
+  }
+
+  static void
+  threaded_task(lotuc::pod::Context<json> *ctx, std::string const &id, std::string const &msg)
+  {
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    ctx->send_invoke_callback(id, msg);
+  }
+
+  void multi_threaded_test::derefer::deref()
+  {
+    std::vector<std::thread> threads;
+    threads.reserve(100);
+    for(int i = 0; i < 100; i++)
+    {
+      threads.emplace_back(threaded_task, &ctx, id, "hello from " + std::to_string(i));
+    }
+    for(auto &t : threads)
+    {
+      t.join();
+    }
+    ctx.send_invoke_success(id);
   }
 }
 

@@ -10,6 +10,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <mutex>
 
 namespace bc = bencode;
 
@@ -576,6 +577,8 @@ namespace lotuc::pod
 
   class StdInOutTransport : public Transport
   {
+    std::mutex write_lock;
+
     bc::data read() override
     {
       return bc::decode_some(std::cin, bc::no_check_eof);
@@ -583,6 +586,7 @@ namespace lotuc::pod
 
     void write(bc::data const &data) override
     {
+      std::lock_guard<std::mutex> lock(write_lock);
       bc::encode_to(std::cout, data);
       std::cout << std::flush;
     }

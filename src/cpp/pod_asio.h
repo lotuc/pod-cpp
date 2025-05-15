@@ -68,10 +68,11 @@ namespace lotuc::pod
   class TcpTransport : public Transport
   {
   public:
+    std::mutex write_lock;
     unsigned short _port;
     tcp::acceptor _acceptor;
     tcp::iostream _stream;
-    bool _accepted{};
+    volatile bool _accepted{};
 
     static void remove_portfile()
     {
@@ -111,6 +112,7 @@ namespace lotuc::pod
     void write(bc::data const &data) override
     {
       _accept();
+      std::lock_guard<std::mutex> lock(write_lock);
       bc::encode_to(_stream, data);
       _stream.flush();
     }

@@ -17,10 +17,18 @@
    (pods/unload-pod {:pod/id "test-pod"})
    (pods/load-pod (pod-spec))))
 
+(def print-handlers
+  {:success (fn [e]
+              (println [:success e]))
+   :error   (fn [{:keys [ex-message ex-data]}]
+              (println [:error ex-message ex-data]))})
+
 (comment
   (def pod (reload-pod "test-pod-via-socket" {:transport :socket}))
   (def pod (reload-pod))
   (pods/unload-pod pod)
+
+  (test-pod/echo "hello world")
 
   (test-pod/add-sync 1 2 3)
 
@@ -29,11 +37,13 @@
    (:pod/id pod)
    'test-pod/range_stream
    [0 10]
-   {:handlers
-    {:success (fn [e]
-                (println [:success e]))
-     :error   (fn [{:keys [ex-message ex-data]}]
-                (println [:error ex-message ex-data]))}})
+   {:handlers print-handlers})
+
+  (babashka.pods/invoke
+   (:pod/id pod)
+   'test-pod/multi_threaded_test
+   []
+   {:handlers print-handlers})
 
   (resolve 'test-pod/do_twice)
 
@@ -82,5 +92,10 @@
 
   (pods/unload-pod {:pod/id "perf-0"})
   (pods/unload-pod {:pod/id "perf-1"})
+
+  ;; macOS 2.6 GHz 6-Core Intel Core i7
+  ;; [stdio] : 938
+  ;; [socket]: 1901
+  ;; [bb]    : 2
 
   #_())
