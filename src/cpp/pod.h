@@ -27,11 +27,13 @@ namespace lotuc::pod
     return s ? s : "";
   }
 
+  /** babashka starts the pod with this environment set. */
   static bool is_babashka_pod_env()
   {
     return getenv("BABASHKA_POD") == "true";
   }
 
+  /** babashka starts the pod & expects socket transport with this environment. */
   static bool is_babashka_transport_socket()
   {
     return getenv("BABASHKA_POD_TRANSPORT") == "socket";
@@ -41,8 +43,14 @@ namespace lotuc::pod
   class Encoder
   {
   public:
+    std::string format;
+
+    Encoder(std::string const &format)
+      : format{ format }
+    {
+    }
+
     virtual ~Encoder() = default;
-    virtual std::string format() = 0;
     virtual std::string encode(T const &d) = 0;
     virtual std::string encode(std::vector<std::string> const &statuses) = 0;
     virtual T decode(std::string const &s) = 0;
@@ -71,9 +79,8 @@ namespace lotuc::pod
       });
     }
 
-    void send_invoke_failure(std::string const &id,
-                             std::string const &ex_message,
-                             bc::data const &ex_data)
+    void
+    send_invoke_error(std::string const &id, std::string const &ex_message, bc::data const &ex_data)
     {
       write(bc::dict{
         {         "id",                          id },
@@ -89,6 +96,14 @@ namespace lotuc::pod
         {     "id",         id },
         {  "value",      value },
         { "status", bc::list{} }
+      });
+    }
+
+    void send_invoke_success(std::string const &id)
+    {
+      write(bc::dict{
+        {     "id",                 id },
+        { "status", bc::list{ "done" } }
       });
     }
 
@@ -109,10 +124,15 @@ namespace lotuc::pod
   class Namespace
   {
   public:
-    bool _defer;
-    std::function<void(Namespace<T> &)> _load_vars;
-    std::string _name;
-    std::vector<std::string> _var_names;
+    std::string const name;
+
+    /** https://github.com/babashka/pods?tab=readme-ov-file#deferred-namespace-loading
+     *
+     * Deferred namespace loading.
+     */
+    bool const defer;
+    std::function<void(Namespace<T> &)> const load_vars;
+
     std::map<std::string, std::unique_ptr<Var<T>>> _vars;
     void add_var(std::unique_ptr<Var<T>> var);
 
@@ -120,19 +140,20 @@ namespace lotuc::pod
     bc::data describe(bool force);
 
     Namespace(std::string const &name)
-      : _name(name)
-      , _defer{ false }
+      : name(name)
+      , defer{ false }
+      , load_vars{}
     {
     }
 
     Namespace(std::string const &name, bool defer, std::function<void(Namespace<T> &)> load_vars)
-      : _name(name)
-      , _defer{ defer }
-      , _load_vars{ load_vars }
+      : name(name)
+      , defer{ defer }
+      , load_vars{ load_vars }
     {
       if(!defer)
       {
-        _load_vars(*this);
+        load_vars(*this);
       }
     }
   };
@@ -141,15 +162,13 @@ namespace lotuc::pod
   class Context
   {
   public:
-    std::string _pod_id;
-    std::unique_ptr<Encoder<T>> _encoder;
-    std::unique_ptr<Transport> _transport;
-    std::function<void()> _cleanup;
+    std::string const _pod_id;
+    std::unique_ptr<Encoder<T>> const _encoder;
+    std::unique_ptr<Transport> const _transport;
+    std::function<void()> const _cleanup;
 
     std::vector<std::string> _ns_names;
     std::map<std::string, std::unique_ptr<Namespace<T>>> _ns;
-
-    std::map<std::string, std::unique_ptr<Var<T>>> _vars;
 
     Context(std::unique_ptr<Encoder<T>> encoder,
             std::unique_ptr<Transport> transport,
@@ -161,7 +180,7 @@ namespace lotuc::pod
     {
     }
 
-    Context(std::string &pod_id,
+    Context(std::string const &pod_id,
             std::unique_ptr<Encoder<T>> encoder,
             std::unique_ptr<Transport> transport,
             std::function<void()> cleanup)
@@ -188,7 +207,7 @@ namespace lotuc::pod
     void add_ns(std::unique_ptr<Namespace<T>> ns);
 
     /** find the `Var` by the qualified name. */
-    Var<T> *find_var(std::string const &qualified_name);
+    Var<T> const *find_var(std::string const &qualified_name);
 
     /** find namespace by its name. */
     Namespace<T> *find_ns(std::string const &name);
@@ -223,13 +242,12 @@ namespace lotuc::pod
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#error-handling
      *
-     * Sending invoke failure response.
+     * Sending invoke error response.
      */
-    void send_invoke_failure(std::string const &id,
-                             std::string const &ex_message,
-                             T const &ex_data) const
+    void
+    send_invoke_error(std::string const &id, std::string const &ex_message, T const &ex_data) const
     {
-      _transport->send_invoke_failure(id, ex_message, _encoder->encode(ex_data));
+      _transport->send_invoke_error(id, ex_message, _encoder->encode(ex_data));
     }
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#invoke
@@ -239,6 +257,15 @@ namespace lotuc::pod
     void send_invoke_success(std::string const &id, T const &value) const
     {
       _transport->send_invoke_success(id, _encoder->encode(value));
+    }
+
+    /** https://github.com/babashka/pods/blob/47e55fe5e728578ff4dbf7d2a2caf00efea87b1e/test-pod/pod/test_pod.clj#L205
+     *
+     * Can success a call without a value
+     */
+    void send_invoke_success(std::string const &id) const
+    {
+      _transport->send_invoke_success(id);
     }
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#invoke
@@ -268,58 +295,57 @@ namespace lotuc::pod
   };
 
   template <typename T>
-  class VarInvoker
-  {
-  public:
-    Context<T> const &ctx;
-    std::string id;
-
-    VarInvoker(Context<T> const &ctx, std::string const &id)
-      : ctx(ctx)
-      , id(id)
-    {
-    }
-  };
-
-  template <typename T>
   class Var
   {
   public:
-    virtual ~Var() = default;
-
-    virtual std::string name() = 0;
-
-    /** https://github.com/babashka/pods?tab=readme-ov-file#client-side-code
-     *
-     * Arbitrary code which will be executed under namespace `ns`.
-     */
-    virtual std::string code()
-    {
-      return "";
-    }
+    std::string const name;
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#metadata
      *
      * Fixed Metadata on vars
      */
-    virtual std::string meta()
+    std::string const meta;
+
+    /** https://github.com/babashka/pods?tab=readme-ov-file#client-side-code
+     *
+     * Arbitrary code which will be executed under namespace `ns`.
+     */
+    std::string const code;
+
+    /** https://github.com/babashka/pods?tab=readme-ov-file#async
+     *
+     * reference implementation:
+     * https://github.com/babashka/pods/blob/47e55fe5e728578ff4dbf7d2a2caf00efea87b1e/test-pod/pod/test_pod.clj#L123
+     */
+    bool const async;
+
+    Var(std::string const &name, std::string const &meta, std::string const &code, bool async)
+      : name{ name }
+      , meta{ meta }
+      , code{ code }
+      , async{ async }
     {
-      return "";
     }
+
+    virtual ~Var() = default;
 
     bc::data describe()
     {
       auto v = bc::dict{
-        { "name", name() }
+        { "name", name }
       };
-      if(!meta().empty())
+      if(!meta.empty())
       {
-        v["meta"] = meta();
+        v["meta"] = meta;
       }
-      if(!code().empty())
+      if(!code.empty())
       {
-        v["code"] = code();
+        v["code"] = code;
       };
+      if(async)
+      {
+        v["async"] = "true";
+      }
       return v;
     }
 
@@ -343,17 +369,13 @@ namespace lotuc::pod
     };
 
     virtual std::unique_ptr<derefer>
-    make_derefer(Context<T> &ctx, std::string const &id, T const &args) = 0;
+    make_derefer(Context<T> &ctx, std::string const &id, T const &args) const = 0;
   };
 
   template <typename T>
   inline void Namespace<T>::add_var(std::unique_ptr<Var<T>> var)
   {
-    auto n = var->name();
-    if(!_vars.contains(n))
-    {
-      _var_names.emplace_back(n);
-    }
+    auto n = var->name;
     _vars[n] = std::move(var);
   }
 
@@ -367,23 +389,22 @@ namespace lotuc::pod
   inline bc::data Namespace<T>::describe(bool force)
   {
     bc::dict v = bc::dict{
-      { "name", _name }
+      { "name", name }
     };
-    if(_defer && !force)
+    if(defer && !force)
     {
       v["defer"] = "true";
     }
     else
     {
-      if(_load_vars)
+      if(load_vars)
       {
-        _load_vars(*this);
+        load_vars(*this);
       }
       bc::list vars;
-      for(auto &n : _var_names)
+      for(auto &p : _vars)
       {
-        std::unique_ptr<Var<T>> &var = _vars[n];
-        vars.emplace_back(var->describe());
+        vars.emplace_back(p.second->describe());
       }
       v["vars"] = vars;
     }
@@ -393,7 +414,7 @@ namespace lotuc::pod
   template <typename T>
   inline void Context<T>::add_ns(std::unique_ptr<Namespace<T>> ns)
   {
-    auto n = ns->_name;
+    auto n = ns->name;
     if(!_ns.contains(n))
     {
       _ns_names.emplace_back(n);
@@ -421,7 +442,7 @@ namespace lotuc::pod
   }
 
   template <typename T>
-  inline Var<T> *Context<T>::find_var(std::string const &qualified_name)
+  inline Var<T> const *Context<T>::find_var(std::string const &qualified_name)
   {
     auto pos = qualified_name.find('/');
     if(pos == std::string::npos)
@@ -484,9 +505,9 @@ namespace lotuc::pod
     }
 
     return bc::dict{
-      {     "format", _encoder->format() },
-      {        "ops",                ops },
-      { "namespaces",         namespaces }
+      {     "format", _encoder->format },
+      {        "ops",              ops },
+      { "namespaces",       namespaces }
     };
   }
 
@@ -509,7 +530,7 @@ namespace lotuc::pod
         try
         {
           auto _args = std::get<bc::string>(d["args"]);
-          if(Var<T> *var = ctx.find_var(qn); var)
+          if(auto var = ctx.find_var(qn); var)
           {
             auto args = ctx._encoder->decode(_args);
             auto derefer = var->make_derefer(ctx, id, args);
@@ -522,11 +543,11 @@ namespace lotuc::pod
         }
         catch(std::exception const &e)
         {
-          ctx._transport->send_invoke_failure(id, e.what(), bc::dict{});
+          ctx._transport->send_invoke_error(id, e.what(), bc::dict{});
         }
         catch(...)
         {
-          ctx._transport->send_invoke_failure(id, "unkown exception", bc::dict{});
+          ctx._transport->send_invoke_error(id, "unkown exception", bc::dict{});
           throw;
         }
       }

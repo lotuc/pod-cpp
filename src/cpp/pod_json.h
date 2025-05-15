@@ -4,6 +4,7 @@
 #include "pod.h"
 
 #include <nlohmann/json.hpp>
+
 using json = nlohmann::json;
 
 namespace lotuc::pod
@@ -11,11 +12,9 @@ namespace lotuc::pod
   class JsonEncoder : public Encoder<json>
   {
   public:
-    ~JsonEncoder() = default;
-
-    std::string format() override
+    JsonEncoder()
+      : Encoder<json>{ "json" }
     {
-      return "json";
     }
 
     std::string encode(json const &d) override

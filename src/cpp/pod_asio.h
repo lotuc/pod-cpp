@@ -10,8 +10,6 @@
 #include <fstream>
 #include <string>
 
-using tcp = asio::ip::tcp;
-
 namespace
 {
 

@@ -1,24 +1,26 @@
 #include "pod.h"
 #include "pod_helper.h"
 
+#include <climits>
 #include <memory>
 
 // https://github.com/babashka/pods/blob/master/test-pod/pod/test_pod.clj
 namespace test_pod
 {
-  define_pod_var_deref(json, add_sync, "add-sync", "");
-  define_pod_var_deref1(json, echo, "");
-  define_pod_var_deref1(json, error, "");
-  define_pod_var_deref1(json, print, "");
-  define_pod_var_deref1(json, print_err, "");
-  define_pod_var_deref1(json, return_nil, "");
-  define_pod_var_code1(json, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
-  define_pod_var_code1(json, fn_call, "", "(defn fn-call [f x] (f x))");
+  define_pod_var(json, add_sync, "add-sync", "{:doc \"add the arguments\"}", false);
+  define_pod_var_async(json, range_stream, "");
+  define_pod_var_sync(json, echo, "");
+  define_pod_var_sync(json, error, "");
+  define_pod_var_sync(json, print, "");
+  define_pod_var_sync(json, print_err, "");
+  define_pod_var_sync(json, return_nil, "");
+  define_pod_var_code(json, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
+  define_pod_var_code(json, fn_call, "", "(defn fn-call [f x] (f x))");
 
   static void load_vars(lotuc::pod::Namespace<json> &ns)
   {
-    std::cerr << "\n\nloading vars: " << ns._name << "\n\n";
     ns.add_var(std::make_unique<add_sync>());
+    ns.add_var(std::make_unique<range_stream>());
     ns.add_var(std::make_unique<error>());
     ns.add_var(std::make_unique<echo>());
     ns.add_var(std::make_unique<error>());
@@ -54,6 +56,42 @@ namespace test_pod
     ctx.send_invoke_success(id, r);
   }
 
+  void range_stream::derefer::deref()
+  {
+    int start = 0, end = 0, step = 1;
+    size_t n = args.size();
+    if(n == 0)
+    {
+      start = 0;
+      end = INT_MAX;
+      step = 1;
+    }
+    else if(n == 1)
+    {
+      start = 0;
+      end = args[0].get<int>();
+      step = 1;
+    }
+    else if(n == 2)
+    {
+      start = args[0].get<int>();
+      end = args[1].get<int>();
+      step = 1;
+    }
+    else
+    {
+      start = args[0].get<int>();
+      end = args[1].get<int>();
+      step = args[2].get<int>();
+    }
+    for(int i = start; i < end; i += step)
+    {
+      ctx.send_invoke_callback(id, i);
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    ctx.send_invoke_success(id);
+  }
+
   void echo::derefer::deref()
   {
     ctx.send_invoke_success(id, args[0]);
@@ -64,7 +102,7 @@ namespace test_pod
     json ex_data = {
       { "args", args }
     };
-    ctx.send_invoke_failure(id, "Illegal arguments", ex_data);
+    ctx.send_invoke_error(id, "Illegal arguments", ex_data);
   }
 
   void print::derefer::deref()
