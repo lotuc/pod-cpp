@@ -17,6 +17,28 @@ namespace lotuc::pod
     {
     }
 
+    bool is_dict(json const &v) override
+    {
+      return v.is_object();
+    }
+
+    json make_dict(std::string const &k, json const &v) override
+    {
+      return {
+        { k, v }
+      };
+    }
+
+    json empty_dict() override
+    {
+      return json::object();
+    }
+
+    json empty_list() override
+    {
+      return json::array();
+    }
+
     std::string encode(json const &d) override
     {
       return d.dump();

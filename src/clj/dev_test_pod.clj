@@ -28,6 +28,7 @@
   (def pod (reload-pod))
   (pods/unload-pod pod)
 
+  (test-pod/echo)
   (test-pod/echo "hello world")
 
   (test-pod/add-sync 1 2 3)
@@ -59,6 +60,8 @@
   (test-pod/print_err "hello" "world")
   (test-pod/do-twice (println "hello"))
   (test-pod/fn-call (fn [x] (+ x 42)) 24)
+
+  (test-pod/mis_implementation "no-finish-message-sent")
 
   (require '[test-pod-defer])
   (test-pod-defer/add-sync 1 2 3)

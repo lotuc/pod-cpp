@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <map>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -53,7 +54,11 @@ namespace lotuc::pod
 
     virtual ~Encoder() = default;
     virtual std::string encode(T const &d) = 0;
-    virtual std::string encode(std::vector<std::string> const &statuses) = 0;
+    virtual std::string encode(std::vector<std::string> const &status) = 0;
+    virtual bool is_dict(T const &v) = 0;
+    virtual T make_dict(std::string const &k, T const &v) = 0;
+    virtual T empty_dict() = 0;
+    virtual T empty_list() = 0;
     virtual T decode(std::string const &s) = 0;
   };
 
@@ -248,7 +253,14 @@ namespace lotuc::pod
     void
     send_invoke_error(std::string const &id, std::string const &ex_message, T const &ex_data) const
     {
-      _transport->send_invoke_error(id, ex_message, _encoder->encode(ex_data));
+      auto valid = _encoder->is_dict(ex_data);
+      if(!valid)
+      {
+        send_err(id, "automatically wrapping non-dict error data, try fix the implementation");
+      }
+      auto d = _encoder->encode(valid ? ex_data
+                                      : _encoder->make_dict("ex-data", _encoder->encode(ex_data)));
+      _transport->send_invoke_error(id, ex_message, d);
     }
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#invoke
@@ -292,7 +304,70 @@ namespace lotuc::pod
     {
     }
 
-    void start();
+    virtual void invoke(std::unique_ptr<typename Var<T>::derefer> derefer) = 0;
+
+    void read_eval_loop()
+    {
+      auto &ctx = this->ctx;
+      while(true)
+      {
+        auto d = std::get<bc::dict>(ctx._transport->read());
+        auto op = std::get<bc::string>(d["op"]);
+        if(op == "describe")
+        {
+          auto v = ctx.describe();
+          ctx._transport->write(v);
+        }
+        else if(op == "invoke")
+        {
+          auto id = std::get<bc::string>(d["id"]);
+          auto qn = std::get<bc::string>(d["var"]);
+          std::optional<std::string> args = d.find("args") == d.cend()
+            ? std::nullopt
+            : std::make_optional(std::get<bc::string>(d["args"]));
+          try
+          {
+            if(auto var = ctx.find_var(qn); var)
+            {
+              auto args_v = args.has_value() ? ctx._encoder->decode(args.value())
+                                             : ctx._encoder->empty_list();
+              invoke(std::move(var->make_derefer(ctx, id, args_v)));
+            }
+            else
+            {
+              ctx._transport->send_invoke_error(id, "var not found", bc::dict{});
+            }
+          }
+          catch(std::exception const &e)
+          {
+            ctx._transport->send_invoke_error(id, e.what(), bc::dict{});
+          }
+          catch(...)
+          {
+            ctx._transport->send_invoke_error(id, "unkown exception", bc::dict{});
+            throw;
+          }
+        }
+        else if(op == "load-ns")
+        {
+          auto name = std::get<bc::string>(d["ns"]);
+          auto ns = ctx.find_ns(name);
+          auto r = ns->describe(true);
+          auto id = d["id"];
+          r["id"] = id;
+          ctx._transport->write(r);
+        }
+        else if(op == "shutdown")
+        {
+          ctx.cleanup();
+          break;
+        }
+        else
+        {
+          break;
+        }
+      }
+    }
   };
 
   template <typename T>
@@ -353,19 +428,60 @@ namespace lotuc::pod
     class derefer
     {
     public:
-      Context<T> &ctx;
+      Context<T> &_ctx;
       std::string id;
       T args;
+      volatile bool done{ false };
 
       derefer(Context<T> &ctx, std::string const &id, T const &args)
-        : ctx(ctx)
+        : _ctx(ctx)
         , id(id)
         , args(args)
       {
       }
 
+      void out(std::string const &msg)
+      {
+        _ctx.send_out(id, msg);
+      }
+
+      void err(std::string const &msg)
+      {
+        _ctx.send_err(id, msg);
+      }
+
+      void callback(T const &v)
+      {
+        _ctx.send_invoke_callback(id, v);
+      }
+
+      void success()
+      {
+        _ctx.send_invoke_success(id);
+        done = true;
+      }
+
+      void success(T const &v)
+      {
+        _ctx.send_invoke_success(id, v);
+        done = true;
+      }
+
+      void error(std::string const &ex_message, T const &ex_data)
+      {
+        _ctx.send_invoke_error(id, ex_message, ex_data);
+        done = true;
+      }
+
+      void error(std::string const &ex_message)
+      {
+        _ctx.send_invoke_error(id, ex_message, _ctx._encoder->empty_dict());
+        done = true;
+      }
+
       virtual ~derefer() = default;
 
+      /** Triggers evaluation of the var. When returned, we expect `done` turn true. */
       virtual void deref() = 0;
     };
 
@@ -510,67 +626,6 @@ namespace lotuc::pod
       {        "ops",              ops },
       { "namespaces",       namespaces }
     };
-  }
-
-  template <typename T>
-  inline void Pod<T>::start()
-  {
-    while(true)
-    {
-      auto d = ctx._transport->read();
-      auto op = std::get<bc::string>(d["op"]);
-      if(op == "describe")
-      {
-        auto v = ctx.describe();
-        ctx._transport->write(v);
-      }
-      else if(op == "invoke")
-      {
-        auto id = std::get<bc::string>(d["id"]);
-        auto qn = std::get<bc::string>(d["var"]);
-        try
-        {
-          auto _args = std::get<bc::string>(d["args"]);
-          if(auto var = ctx.find_var(qn); var)
-          {
-            auto args = ctx._encoder->decode(_args);
-            auto derefer = var->make_derefer(ctx, id, args);
-            derefer->deref();
-          }
-          else
-          {
-            ctx.send_err(id, "var not found");
-          }
-        }
-        catch(std::exception const &e)
-        {
-          ctx._transport->send_invoke_error(id, e.what(), bc::dict{});
-        }
-        catch(...)
-        {
-          ctx._transport->send_invoke_error(id, "unkown exception", bc::dict{});
-          throw;
-        }
-      }
-      else if(op == "load-ns")
-      {
-        auto name = std::get<bc::string>(d["ns"]);
-        auto ns = ctx.find_ns(name);
-        auto r = ns->describe(true);
-        auto id = d["id"];
-        r["id"] = id;
-        ctx._transport->write(r);
-      }
-      else if(op == "shutdown")
-      {
-        ctx.cleanup();
-        break;
-      }
-      else
-      {
-        break;
-      }
-    }
   }
 
   //////////////////////////////////////////////////////////////////////////////

@@ -1,8 +1,10 @@
+#include "bencode.hpp"
 #include "pod.h"
 #include "pod_helper.h"
 
 #include <climits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -19,6 +21,7 @@ namespace test_pod
   define_pod_var_code(json, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
   define_pod_var_code(json, fn_call, "", "(defn fn-call [f x] (f x))");
   define_pod_var_sync(json, multi_threaded_test, "");
+  define_pod_var_sync(json, mis_implementation, "");
 
   static void load_vars(lotuc::pod::Namespace<json> &ns)
   {
@@ -33,6 +36,7 @@ namespace test_pod
     ns.add_var(std::make_unique<do_twice>());
     ns.add_var(std::make_unique<fn_call>());
     ns.add_var(std::make_unique<multi_threaded_test>());
+    ns.add_var(std::make_unique<mis_implementation>());
   }
 
   static std::unique_ptr<lotuc::pod::Namespace<json>> build_ns()
@@ -57,7 +61,7 @@ namespace test_pod
     {
       r += a.get<int>();
     }
-    ctx.send_invoke_success(id, r);
+    success(r);
   }
 
   void range_stream::derefer::deref()
@@ -90,47 +94,47 @@ namespace test_pod
     }
     for(int i = start; i < end; i += step)
     {
-      ctx.send_invoke_callback(id, i);
+      callback(i);
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-    ctx.send_invoke_success(id);
+    success();
   }
 
   void echo::derefer::deref()
   {
-    ctx.send_invoke_success(id, args[0]);
+    success(args[0]);
   }
 
   void error::derefer::deref()
   {
-    json ex_data = {
-      { "args", args }
-    };
-    ctx.send_invoke_error(id, "Illegal arguments", ex_data);
+    error("Illegal arguments",
+          {
+            { "args", args }
+    });
   }
 
   void print::derefer::deref()
   {
-    ctx.send_out(id, args.dump() + "\n");
-    ctx.send_invoke_success(id, {});
+    out(args.dump() + "\n");
+    success({});
   }
 
   void print_err::derefer::deref()
   {
-    ctx.send_err(id, args.dump() + "\n");
-    ctx.send_invoke_success(id, {});
+    err(args.dump() + "\n");
+    success({});
   }
 
   void return_nil::derefer::deref()
   {
-    ctx.send_invoke_success(id, {});
+    success({});
   }
 
   static void
-  threaded_task(lotuc::pod::Context<json> *ctx, std::string const &id, std::string const &msg)
+  threaded_task(lotuc::pod::Var<json>::derefer *d, std::string const &id, std::string const &msg)
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    ctx->send_invoke_callback(id, msg);
+    d->callback(msg);
   }
 
   void multi_threaded_test::derefer::deref()
@@ -139,13 +143,30 @@ namespace test_pod
     threads.reserve(100);
     for(int i = 0; i < 100; i++)
     {
-      threads.emplace_back(threaded_task, &ctx, id, "hello from " + std::to_string(i));
+      threads.emplace_back(threaded_task, this, id, "hello from " + std::to_string(i));
     }
     for(auto &t : threads)
     {
       t.join();
     }
-    ctx.send_invoke_success(id);
+    success();
+  }
+
+  void mis_implementation::derefer::deref()
+  {
+    std::string typ = "no-finish-message-sent";
+    if(args.size() == 1)
+    {
+      typ = args[0].get<std::string>();
+    }
+    if(typ == "no-finish-message-sent")
+    {
+      return;
+    }
+    else
+    {
+      throw std::runtime_error{ "unkown mis-implementation-type: " + typ };
+    }
   }
 }
 
@@ -161,14 +182,10 @@ int main(int argc, char **argv)
   {
     pod_id = argv[1];
   }
-
   std::unique_ptr<pod::Context<json>> ctx = pod::build_json_ctx(pod_id);
   ctx->add_ns(test_pod::build_ns());
   ctx->add_ns(test_pod::build_defer_ns());
   ctx->describe();
-
-  pod::Pod<json> pod_{ *ctx };
-  pod_.start();
-
+  std::make_unique<pod::SyncPod<json>>(*ctx)->read_eval_loop();
   return 0;
 }
