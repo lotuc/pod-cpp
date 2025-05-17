@@ -5,7 +5,8 @@ cpp.
 
 ## Walkthrough
 
-Build
+Build the test pod (the implementations are in
+[src-dev/cpp/test_pod.cpp](src-dev/cpp/test_pod.cpp)).
 
 ```
 brew install nlohmann-json asio
@@ -14,7 +15,8 @@ cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -B build -S .
 cmake --build build
 ```
 
-Load & run (start bababshka repl with `bb`)
+Load & run (start bababshka repl with `bb`, more examples in
+[src-dev/clj/dev.clj](src/clj/dev.clj))
 
 ```clojure
 (require '[babashka.pods :as pods])
@@ -23,28 +25,29 @@ Load & run (start bababshka repl with `bb`)
 (def test-pod ["./build/test_pod"])
 
 ;; load pod
-(def pod-id (pods/load-pod test-pod))
-(pods/unload-pod pod-id)
+(def pod (pods/load-pod test-pod))
 
-;; the functions
-(pod.test-pod/add-sync 1 2 3)
+;; sync call
+(test-pod/add-sync 1 2 3)
 
-(test_pod/error "hello")
-(test_pod/echo 42)
-(test_pod/echo "hello world")
-(test_pod/echo ["hello" "world"])
+;; async call with multiple callback returns
+(babashka.pods/invoke
+ (:pod/id pod)
+ 'test-pod/range_stream
+ [0 10]
+ {:handlers
+  {:success
+    (fn [e]
+      (println [:success e]))
+   :error
+    (fn [{:keys [ex-message ex-data]}]
+      (println [:error ex-message ex-data]))}})
 
-(test_pod/return_nil)
-(test_pod/print "hello")
-(test_pod/print "hello" "world")
-(test_pod/print_err "hello")
-(test_pod/print_err "hello" "world")
-(test_pod/do-twice (println "hello"))
-(test_pod/fn-call (fn [x] (+ x 42)) 24)
+;; lazy loaded namespaces
+(resolve 'test-pod-defer/add-sync) ;; => nil
+(require '[test-pod-defer])
+(test-pod-defer/add-sync 1 2 3)
 
-(pods/unload-pod pod-id)
+;; unload pod
+(pods/unload-pod pod)
 ```
-
-Related files
-- [src-dev/cpp/test_pod.cpp](src-dev/cpp/test_pod.cpp)
-- [src/clj/dev.clj](src/clj/dev.clj)
