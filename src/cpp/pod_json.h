@@ -49,6 +49,20 @@ namespace lotuc::pod
       return json(status).dump();
     }
 
+    std::string encode_pendings(
+      std::map<std::string, std::pair<json, long long>> const &pending_args_start_ts) override
+    {
+      json r;
+      for(auto &p : pending_args_start_ts)
+      {
+        r[p.first] = {
+          {     "args",  p.second.first },
+          { "start-ts", p.second.second }
+        };
+      }
+      return r.dump();
+    }
+
     json decode(std::string const &s) override
     {
       return json::parse(s);

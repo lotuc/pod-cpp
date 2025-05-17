@@ -66,6 +66,9 @@
   (w {:op "invoke" :id "42" :var "test-pod/echo"
       :args (json/generate-string ["hello world"])})
 
+  (w {:op "invoke" :id "42" :var "lotuc.babashka.pods/pendings"
+      :args (json/generate-string [])})
+
   (w {:op "invoke" :id "42" :var "test_pod/echo"
       :args (json/generate-string [])})
 
@@ -84,3 +87,11 @@
   "d4:args2:[]2:id2:422:op6:invoke3:var14:test_pod/errore"
 
   #_())
+
+(to-netstring {:op "invoke" :id "42" :var "lotuc.babashka.pods/pendings"
+               :args (json/generate-string [])})
+"d4:args2:[]2:id2:422:op6:invoke3:var28:lotuc.babashka.pods/pendingse"
+
+(to-netstring {:op "invoke" :id "42" :var "test-pod/sleep"
+               :args (json/generate-string [10000])})
+"d4:args7:[10000]2:id2:422:op6:invoke3:var14:test-pod/sleepe"

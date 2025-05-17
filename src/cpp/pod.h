@@ -4,6 +4,7 @@
 #include "bencode.hpp"
 
 #include <cstddef>
+#include <future>
 #include <map>
 #include <memory>
 #include <optional>
@@ -55,6 +56,10 @@ namespace lotuc::pod
     virtual ~Encoder() = default;
     virtual std::string encode(T const &d) = 0;
     virtual std::string encode(std::vector<std::string> const &status) = 0;
+    // pretty dirty
+    virtual std::string
+    encode_pendings(std::map<std::string, std::pair<T, long long>> const &pending_args_start_ts)
+      = 0;
     virtual bool is_dict(T const &v) = 0;
     virtual T make_dict(std::string const &k, T const &v) = 0;
     virtual T empty_dict() = 0;
@@ -226,7 +231,7 @@ namespace lotuc::pod
      * loaded `pod-id`. It's not a documented behavior, but here we're utilizing
      * it for customizing `pod-id`.
      */
-    bc::data describe();
+    bc::data describe(std::vector<std::unique_ptr<Namespace<T>>> &builtins);
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#out-and-err
      *
@@ -304,7 +309,12 @@ namespace lotuc::pod
     {
     }
 
-    virtual void invoke(std::unique_ptr<typename Var<T>::derefer> derefer) = 0;
+    virtual std::vector<std::unique_ptr<Namespace<T>>> builtins()
+    {
+      return {};
+    }
+
+    virtual void invoke(Var<T> const &var, std::unique_ptr<typename Var<T>::derefer> derefer) = 0;
 
     void read_eval_loop()
     {
@@ -313,40 +323,30 @@ namespace lotuc::pod
       {
         auto d = std::get<bc::dict>(ctx._transport->read());
         auto op = std::get<bc::string>(d["op"]);
-        if(op == "describe")
-        {
-          auto v = ctx.describe();
-          ctx._transport->write(v);
-        }
-        else if(op == "invoke")
+
+        if(op == "invoke")
         {
           auto id = std::get<bc::string>(d["id"]);
           auto qn = std::get<bc::string>(d["var"]);
           std::optional<std::string> args = d.find("args") == d.cend()
             ? std::nullopt
             : std::make_optional(std::get<bc::string>(d["args"]));
-          try
+          if(auto var = ctx.find_var(qn); var)
           {
-            if(auto var = ctx.find_var(qn); var)
-            {
-              auto args_v = args.has_value() ? ctx._encoder->decode(args.value())
-                                             : ctx._encoder->empty_list();
-              invoke(std::move(var->make_derefer(ctx, id, args_v)));
-            }
-            else
-            {
-              ctx._transport->send_invoke_error(id, "var not found", bc::dict{});
-            }
+            auto args_v
+              = args.has_value() ? ctx._encoder->decode(args.value()) : ctx._encoder->empty_list();
+            invoke(*var, std::move(var->make_derefer(ctx, id, args_v)));
           }
-          catch(std::exception const &e)
+          else
           {
-            ctx._transport->send_invoke_error(id, e.what(), bc::dict{});
+            ctx._transport->send_invoke_error(id, "var not found", bc::dict{});
           }
-          catch(...)
-          {
-            ctx._transport->send_invoke_error(id, "unkown exception", bc::dict{});
-            throw;
-          }
+        }
+        else if(op == "describe")
+        {
+          auto n = builtins();
+          auto v = ctx.describe(n);
+          ctx._transport->write(v);
         }
         else if(op == "load-ns")
         {
@@ -435,8 +435,8 @@ namespace lotuc::pod
 
       derefer(Context<T> &ctx, std::string const &id, T const &args)
         : _ctx(ctx)
-        , id(id)
-        , args(args)
+        , id{ id }
+        , args{ args }
       {
       }
 
@@ -582,8 +582,13 @@ namespace lotuc::pod
   }
 
   template <typename T>
-  inline bc::data Context<T>::describe()
+  inline bc::data Context<T>::describe(std::vector<std::unique_ptr<Namespace<T>>> &builtins)
   {
+    for(auto &ns : builtins)
+    {
+      add_ns(std::move(ns));
+    }
+
     bc::dict ops;
     {
       if(_cleanup)
@@ -646,6 +651,130 @@ namespace lotuc::pod
       std::cout << std::flush;
     }
   };
+
+  template <typename T>
+  class SyncPod : public Pod<T>
+  {
+  public:
+    using Pod<T>::Pod;
+
+    static void do_invoke(std::unique_ptr<typename Var<T>::derefer> derefer)
+    {
+      try
+      {
+        derefer->deref();
+        if(!derefer->done)
+        {
+          derefer->error("illegal var implementation, deref returned without any notice");
+        }
+      }
+      catch(std::exception const &e)
+      {
+        std::string ex_message = e.what();
+        derefer->error(ex_message);
+      }
+      catch(...)
+      {
+        derefer->error("unkown exception");
+      }
+    }
+
+    void invoke(Var<T> const &var, std::unique_ptr<typename Var<T>::derefer> derefer) override
+    {
+      do_invoke(std::move(derefer));
+    }
+  };
+
+  template <typename T>
+  class AsyncPod : public Pod<T>
+  {
+  public:
+    std::map<std::string, std::pair<T, long long>> _pending_args_start_ts;
+    std::map<std::string, std::future<void>> _pendings;
+
+    class pendings_var : public Var<T>
+    {
+    public:
+      AsyncPod<T> &pod;
+
+      pendings_var(AsyncPod<T> &pod)
+        : Var<T>("pendings", "{:doc \"pending invokes\"}", "", false)
+        , pod{ pod }
+      {
+      }
+
+      class derefer : public Var<T>::derefer
+      {
+      public:
+        AsyncPod<T> &pod;
+
+        derefer(Context<T> &ctx, std::string const &id, T const &args, AsyncPod<T> &pod)
+          : Var<T>::derefer::derefer{ ctx, id, args }
+          , pod{ pod }
+        {
+        }
+
+        using lotuc::pod::Var<T>::derefer::derefer;
+
+        void deref() override
+        {
+          std::map<std::string, std::pair<T, long long>> pendings{ pod._pending_args_start_ts };
+          auto v = this->_ctx._encoder->encode_pendings(pendings);
+          this->_ctx._transport->send_invoke_success(this->id, v);
+          this->done = true;
+        }
+      };
+
+      std::unique_ptr<typename Var<T>::derefer>
+      make_derefer(Context<T> &ctx, std::string const &id, T const &args) const override
+      {
+        return std::make_unique<derefer>(ctx, id, args, this->pod);
+      }
+    };
+
+    AsyncPod(Context<T> &ctx)
+      : Pod<T>::Pod{ ctx }
+    {
+    }
+
+    std::vector<std::unique_ptr<Namespace<T>>> builtins() override
+    {
+      std::vector<std::unique_ptr<Namespace<T>>> ret;
+      auto ns = std::make_unique<Namespace<T>>("lotuc.babashka.pods");
+      ns->add_var(std::make_unique<pendings_var>(*this));
+      ret.push_back(std::move(ns));
+      return ret;
+    }
+
+    static void do_invoke(AsyncPod<T> *pod, std::unique_ptr<typename Var<T>::derefer> derefer)
+    {
+      auto duration = std::chrono::system_clock::now().time_since_epoch();
+      auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
+
+      std::string id = derefer->id;
+      T args = derefer->args;
+
+      pod->_pending_args_start_ts[id] = { args, millis };
+      auto t = std::async(SyncPod<T>::do_invoke, std::move(derefer));
+      pod->_pendings[id] = std::move(t);
+      pod->_pendings[id].get();
+      pod->_pendings.erase(id);
+      pod->_pending_args_start_ts.erase(id);
+    }
+
+    void invoke(Var<T> const &var, std::unique_ptr<typename Var<T>::derefer> derefer) override
+    {
+      if(var.async)
+      {
+        std::thread(AsyncPod<T>::do_invoke, this, std::move(derefer)).detach();
+      }
+      else
+      {
+        SyncPod<T>::do_invoke(std::move(derefer));
+      }
+    }
+  };
+
 }
 
 #endif // POD_H_

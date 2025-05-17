@@ -103,22 +103,6 @@ namespace lotuc::pod
   {
     return build_json_ctx("", cleanup);
   }
-
-  template <typename T>
-  class SyncPod : public Pod<T>
-  {
-  public:
-    using Pod<T>::Pod;
-
-    void invoke(std::unique_ptr<typename Var<T>::derefer> derefer) override
-    {
-      derefer->deref();
-      if(!derefer->done)
-      {
-        derefer->error("illegal var implementation, deref returned without any notice");
-      }
-    }
-  };
 }
 
 #endif // POD_HELPER_H_
