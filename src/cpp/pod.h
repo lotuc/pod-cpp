@@ -24,23 +24,58 @@ namespace bc = bencode;
 
 namespace lotuc::pod
 {
-  static std::string getenv(std::string const &n)
+  inline std::string getenv(std::string const &n)
   {
     char const *s = ::getenv(n.c_str());
     return s ? s : "";
   }
 
   /** babashka starts the pod with this environment set. */
-  static bool is_babashka_pod_env()
+  inline bool is_babashka_pod_env()
   {
     return getenv("BABASHKA_POD") == "true";
   }
 
   /** babashka starts the pod & expects socket transport with this environment. */
-  static bool is_babashka_transport_socket()
+  inline bool is_babashka_transport_socket()
   {
     return getenv("BABASHKA_POD_TRANSPORT") == "socket";
   }
+
+  struct ScopeGuard
+  {
+    std::function<void()> cleanup;
+
+    ScopeGuard(std::function<void()> cleanup)
+      : cleanup{ std::move(cleanup) }
+    {
+    }
+
+    ~ScopeGuard()
+    {
+      cleanup();
+    }
+  };
+
+  template <typename T>
+  struct PendingInvoke
+  {
+    std::string id;
+    T args;
+    long long start_ts;
+    std::future<void> fut;
+
+    PendingInvoke<T>(std::string const &id,
+                     T const &args,
+                     long long start_ts,
+                     std::future<void> fut)
+      : id{ id }
+      , start_ts{ start_ts }
+      , args{ args }
+      , fut{ std::move(fut) }
+    {
+    }
+  };
 
   template <typename T>
   class Encoder
@@ -56,10 +91,7 @@ namespace lotuc::pod
     virtual ~Encoder() = default;
     virtual std::string encode(T const &d) = 0;
     virtual std::string encode(std::vector<std::string> const &status) = 0;
-    // pretty dirty
-    virtual std::string
-    encode_pendings(std::map<std::string, std::pair<T, long long>> const &pending_args_start_ts)
-      = 0;
+    virtual std::string encode(std::vector<PendingInvoke<T> *> const &pendings) = 0;
     virtual bool is_dict(T const &v) = 0;
     virtual T make_dict(std::string const &k, T const &v) = 0;
     virtual T empty_dict() = 0;
@@ -689,8 +721,7 @@ namespace lotuc::pod
   class AsyncPod : public Pod<T>
   {
   public:
-    std::map<std::string, std::pair<T, long long>> _pending_args_start_ts;
-    std::map<std::string, std::future<void>> _pendings;
+    std::map<std::string, PendingInvoke<T>> _pendings;
 
     class pendings_var : public Var<T>
     {
@@ -718,8 +749,13 @@ namespace lotuc::pod
 
         void deref() override
         {
-          std::map<std::string, std::pair<T, long long>> pendings{ pod._pending_args_start_ts };
-          auto v = this->_ctx._encoder->encode_pendings(pendings);
+          std::vector<PendingInvoke<T> *> t;
+          t.reserve(pod._pendings.size());
+          for(auto &p : pod._pendings)
+          {
+            t.push_back(&p.second);
+          }
+          auto v = this->_ctx._encoder->encode(t);
           this->_ctx._transport->send_invoke_success(this->id, v);
           this->done = true;
         }
@@ -750,16 +786,21 @@ namespace lotuc::pod
     {
       auto duration = std::chrono::system_clock::now().time_since_epoch();
       auto millis = std::chrono::duration_cast<std::chrono::milliseconds>(duration).count();
-
       std::string id = derefer->id;
       T args = derefer->args;
 
-      pod->_pending_args_start_ts[id] = { args, millis };
       auto t = std::async(SyncPod<T>::do_invoke, std::move(derefer));
-      pod->_pendings[id] = std::move(t);
-      pod->_pendings[id].get();
-      pod->_pendings.erase(id);
-      pod->_pending_args_start_ts.erase(id);
+
+      ScopeGuard _cleanup{ [&pod, &id]() { pod->_pendings.erase(id); } };
+      pod->_pendings.insert({
+        id,
+        PendingInvoke<T>{ id, args, millis, std::move(t) }
+      });
+      auto it = pod->_pendings.find(id);
+      if(it != pod->_pendings.end())
+      {
+        it->second.fut.get();
+      }
     }
 
     void invoke(Var<T> const &var, std::unique_ptr<typename Var<T>::derefer> derefer) override
