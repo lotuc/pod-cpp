@@ -822,7 +822,7 @@ namespace lotuc::pod
       return ret;
     }
 
-    static void do_invoke(std::unique_ptr<typename Var<T>::derefer> derefer)
+    static void do_invoke(Var<T> const *var, std::unique_ptr<typename Var<T>::derefer> derefer)
     {
       try
       {
@@ -876,7 +876,7 @@ namespace lotuc::pod
       std::string id = derefer->id;
       T args = derefer->args;
 
-      auto fut = std::async(PodImpl<T>::do_invoke, std::move(derefer));
+      auto fut = std::async(PodImpl<T>::do_invoke, var, std::move(derefer));
 
       // clang-format off
       ScopeGuard _cleanup{ [pod, &id]() { pod->_pendings.erase(id); } };

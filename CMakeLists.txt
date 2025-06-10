@@ -11,12 +11,22 @@ if (NOT asio_FOUND)
   find_package(asio CONFIG REQUIRED)
 endif()
 
-add_executable(test_pod src-dev/cpp/test_pod.cpp)
-
-target_include_directories(test_pod PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/bencode.hpp/include"
+set(test_ns_sources
+  src-dev/cpp/test_ns.h
+  src-dev/cpp/test_ns.cpp
 )
+
+add_executable(test_pod src-dev/cpp/test_pod.cpp ${test_ns_sources})
+add_executable(test_jsonrpc src-dev/cpp/test_jsonrpc.cpp ${test_ns_sources})
+
+set(TEST_TARGETS test_pod test_jsonrpc)
+
+foreach(t ${TEST_TARGETS})
+  target_include_directories(${t} PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/bencode.hpp/include"
+  )
+endforeach()
 
 # json encoder support
 target_link_libraries(test_pod PUBLIC nlohmann_json::nlohmann_json)

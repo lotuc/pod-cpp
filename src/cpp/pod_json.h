@@ -4,11 +4,40 @@
 #include "pod.h"
 #include "pod_asio_transport.h"
 #include "pod_json_encoder.h"
+#include "jsonrpc.h"
 
 // JSON format, asio as tcp transport implementation.
 
 namespace lotuc::pod
 {
+
+  inline std::unique_ptr<Context<json>> build_jsonrpc_ctx(std::string const &pod_id,
+                                                          JsonRpcTransport *jsonrpc_transport,
+                                                          std::function<void()> const &cleanup)
+  {
+    std::unique_ptr<Encoder<json>> encoder;
+    std::unique_ptr<BencodeTransport> transport;
+
+    encoder = std::make_unique<JsonEncoder>();
+    transport = std::make_unique<AdaptedBencodeTransport>(jsonrpc_transport);
+
+    std::function<void()> cleanup_all{};
+    if(cleanup)
+    {
+      cleanup_all = [cleanup]() {
+        if(cleanup)
+        {
+          cleanup();
+        }
+      };
+    }
+
+    return std::make_unique<Context<json>>(pod_id,
+                                           std::move(encoder),
+                                           std::move(transport),
+                                           std::move(cleanup_all));
+  }
+
   inline std::unique_ptr<Context<json>>
   build_json_ctx(std::string const &pod_id, std::function<void()> const &cleanup)
   {
