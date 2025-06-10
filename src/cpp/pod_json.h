@@ -1,72 +1,76 @@
-#ifndef POD_JSON_H_
-#define POD_JSON_H_
+#ifndef POD_HELPER_H_
+#define POD_HELPER_H_
 
 #include "pod.h"
+#include "pod_asio_transport.h"
+#include "pod_json_encoder.h"
 
-#include <nlohmann/json.hpp>
-
-using json = nlohmann::json;
+// JSON format, asio as tcp transport implementation.
 
 namespace lotuc::pod
 {
-  class JsonEncoder : public Encoder<json>
+  inline std::unique_ptr<Context<json>>
+  build_json_ctx(std::string const &pod_id, std::function<void()> const &cleanup)
   {
-  public:
-    JsonEncoder()
-      : Encoder<json>{ "json" }
+    std::unique_ptr<Encoder<json>> encoder;
+    std::unique_ptr<BencodeTransport> transport;
+
+    std::function<void()> cleanup_transport = nullptr;
+    if(is_babashka_transport_socket())
     {
+      asio::io_context io_context;
+      encoder = std::make_unique<JsonEncoder>();
+      transport = std::make_unique<TcpTransport>(io_context);
+      cleanup_transport = TcpTransport::remove_portfile;
+    }
+    else
+    {
+      encoder = std::make_unique<JsonEncoder>();
+      transport = std::make_unique<StdInOutTransport>();
     }
 
-    bool is_dict(json const &v) override
+    std::function<void()> cleanup_all{};
+    if(cleanup || cleanup_transport)
     {
-      return v.is_object();
-    }
-
-    json make_dict(std::string const &k, json const &v) override
-    {
-      return {
-        { k, v }
+      cleanup_all = [cleanup_transport, cleanup]() {
+        if(cleanup_transport)
+        {
+          cleanup_transport();
+        }
+        if(cleanup)
+        {
+          cleanup();
+        }
       };
     }
 
-    json empty_dict() override
-    {
-      return json::object();
-    }
+    return std::make_unique<Context<json>>(pod_id,
+                                           std::move(encoder),
+                                           std::move(transport),
+                                           std::move(cleanup_all));
+  }
 
-    json empty_list() override
-    {
-      return json::array();
-    }
+  inline std::unique_ptr<Context<json>>
+  build_json_ctx(char const *pod_id, std::function<void()> const &cleanup)
+  {
+    auto s = std::string(pod_id);
+    return build_json_ctx(s, cleanup);
+  }
 
-    std::string encode(json const &d) override
-    {
-      return d.dump();
-    }
+  inline std::unique_ptr<Context<json>> build_json_ctx(std::string const &pod_id)
+  {
+    return build_json_ctx(pod_id, nullptr);
+  }
 
-    std::string encode(std::vector<std::string> const &status) override
-    {
-      return json(status).dump();
-    }
+  inline std::unique_ptr<Context<json>> build_json_ctx(std::function<void()> const &cleanup)
+  {
+    return build_json_ctx("", cleanup);
+  }
 
-    std::string encode(std::vector<PendingInvoke<json> *> const &pendings) override
-    {
-      json r;
-      for(auto &p : pendings)
-      {
-        r[p->id] = {
-          {     "args",     p->args },
-          { "start-ts", p->start_ts }
-        };
-      }
-      return r.dump();
-    }
-
-    json decode(std::string const &s) override
-    {
-      return json::parse(s);
-    }
-  };
+  inline pod::PodImpl<json> build_pod(pod::Context<json> &ctx, int max_concurrent = 1024)
+  {
+    return PodImpl<json>{ ctx, max_concurrent };
+  }
 }
 
-#endif // POD_JSON_H_
+#endif // POD_HELPER_H_

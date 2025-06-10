@@ -4,12 +4,16 @@
 
 (defn pod-spec
   ([] ["./build/test_pod"])
-  ([pod-id] ["./build/test_pod" pod-id]))
+  ([pod-id] ["./build/test_pod" pod-id])
+  ([pod-id {:keys [max-concurrent]}]
+   (if max-concurrent
+     ["./build/test_pod" pod-id (str max-concurrent)]
+     ["./build/test_pod" pod-id])))
 
 (defn reload-pod
   ([pod-id opts]
    (pods/unload-pod {:pod/id pod-id})
-   (pods/load-pod (pod-spec pod-id) opts))
+   (pods/load-pod (pod-spec pod-id opts) opts))
   ([pod-id]
    (pods/unload-pod {:pod/id pod-id})
    (pods/load-pod (pod-spec pod-id)))
@@ -25,7 +29,7 @@
 
 (comment
   (def pod (reload-pod "test-pod-via-socket" {:transport :socket}))
-  (def pod (reload-pod))
+  (def pod (reload-pod "test-pod-via-stdio" {:max-concurrent 3}))
   (pods/unload-pod pod)
 
   ;; async won't block the pod's read evaluation loop
@@ -36,9 +40,14 @@
 
   ;; I added a utility var lotuc.babashka.pods/pendings for tracking pending
   ;; vars (the unfinished async invokes).
-  (do (future (test-pod/async_sleep 1000))
-      (Thread/sleep 100)
-      (lotuc.babashka.pods/pendings))
+  (let [start (System/currentTimeMillis)
+        done #(println "finishes in:" (- (System/currentTimeMillis) start))]
+    (future (test-pod/async_sleep 1000) (done))
+    (future (test-pod/async_sleep 1000) (done))
+    (future (test-pod/async_sleep 1000) (done))
+    (future (test-pod/async_sleep 1000) (done))
+    (Thread/sleep 100)
+    (lotuc.babashka.pods/pendings))
 
   (test-pod/echo)
   (test-pod/echo "hello world")

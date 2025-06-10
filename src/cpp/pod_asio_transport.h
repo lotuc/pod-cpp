@@ -1,10 +1,13 @@
-#ifndef POD_ASIO_H_
-#define POD_ASIO_H_
+#ifndef POD_ASIO_TRANSPORT_H_
+#define POD_ASIO_TRANSPORT_H_
 
 #include "bencode.hpp"
 #include "pod.h"
 
-#include "asio.hpp"
+#include <asio/error.hpp>
+#include <asio/ip/tcp.hpp>
+#include <asio/io_context.hpp>
+
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
@@ -12,7 +15,6 @@
 
 namespace
 {
-
   namespace fs = std::filesystem;
 
   std::string get_absolute_path(std::string const &path_string)
@@ -65,7 +67,7 @@ namespace lotuc::pod
 {
   using tcp = asio::ip::tcp;
 
-  class TcpTransport : public Transport
+  class TcpTransport : public BencodeTransport
   {
   public:
     std::mutex write_lock;
@@ -85,6 +87,11 @@ namespace lotuc::pod
     {
       _spit_portfile(_acceptor.local_endpoint().port());
       std::atexit(remove_portfile);
+    }
+
+    ~TcpTransport()
+    {
+      _remove_portfile();
     }
 
     void _accept()
@@ -119,4 +126,4 @@ namespace lotuc::pod
   };
 }
 
-#endif // POD_ASIO_H_
+#endif // POD_ASIO_TRANSPORT_H_

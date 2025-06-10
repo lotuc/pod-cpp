@@ -1,8 +1,9 @@
 #include "pod.h"
-#include "pod_helper.h"
+#include "pod_json.h"
 
 #include <climits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -135,13 +136,13 @@ namespace test_pod
 
   void print::derefer::deref()
   {
-    out(args.dump() + "\n");
+    send_stdout(args.dump() + "\n");
     success({});
   }
 
   void print_err::derefer::deref()
   {
-    err(args.dump() + "\n");
+    send_stderr(args.dump() + "\n");
     success({});
   }
 
@@ -211,29 +212,20 @@ int main(int argc, char **argv)
   std::cerr << "BABASHKA_POD_TRANSPORT: " << pod::getenv("BABASHKA_POD_TRANSPORT") << "\n";
 
   std::string pod_id{};
-  bool async_pod{ true };
+  int max_concurrent{ 2 };
   if(argc > 1)
   {
     pod_id = argv[1];
   }
   if(argc > 2)
   {
-    async_pod = std::string(argv[2]) == "async";
+    std::stringstream ss(argv[2]);
+    ss >> max_concurrent;
   }
 
   std::unique_ptr<pod::Context<json>> ctx = pod::build_json_ctx(pod_id);
   ctx->add_ns(test_pod::build_ns());
   ctx->add_ns(test_pod::build_defer_ns());
-  if(async_pod)
-  {
-    // should always use this, it just mean that the implementation supports the
-    // var's `async` definition.
-    pod::AsyncPod<json>(*ctx).read_eval_loop();
-  }
-  else
-  {
-    // always evaluate invoke one by one
-    pod::SyncPod<json>(*ctx).read_eval_loop();
-  }
+  pod::build_pod(*ctx, max_concurrent).read_eval_loop();
   return 0;
 }
