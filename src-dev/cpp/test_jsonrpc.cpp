@@ -37,8 +37,9 @@ int main(int argc, char **argv)
   {
     transport = std::make_unique<pod::StdInOutLinedJsonTransport>();
   }
-  std::unique_ptr<pod::Context<json>> ctx
-    = pod::build_jsonrpc_ctx(pod_id, transport.get(), nullptr);
+  test_pod::C c{};
+  std::unique_ptr<pod::Context<json, test_pod::C>> ctx
+    = pod::build_jsonrpc_ctx<test_pod::C>(pod_id, c, transport.get(), nullptr);
   ctx->add_ns(test_pod::build_ns());
   ctx->add_ns(test_pod::build_defer_ns());
   pod::build_pod(*ctx, max_concurrent).read_eval_loop();

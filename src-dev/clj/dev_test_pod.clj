@@ -88,4 +88,7 @@
   ;; lazy loaded namespaces
   (require '[test-pod-defer])
   (test-pod-defer/add-sync 1 2 3)
+
+  (test-pod/counter_set 0)
+  (test-pod/counter_inc)
   #_())

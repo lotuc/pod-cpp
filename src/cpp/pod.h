@@ -264,10 +264,10 @@ namespace lotuc::pod
     }
   };
 
-  template <typename T>
+  template <typename T, typename C>
   class Var;
 
-  template <typename T>
+  template <typename T, typename C>
   class Namespace
   {
   public:
@@ -278,10 +278,10 @@ namespace lotuc::pod
      * Deferred namespace loading.
      */
     bool const defer;
-    std::function<void(Namespace<T> &)> const load_vars;
+    std::function<void(Namespace<T, C> &)> const load_vars;
 
-    std::map<std::string, std::unique_ptr<Var<T>>> _vars;
-    void add_var(std::unique_ptr<Var<T>> var);
+    std::map<std::string, std::unique_ptr<Var<T, C>>> _vars;
+    void add_var(std::unique_ptr<Var<T, C>> var);
 
     bc::data describe();
     bc::data describe(bool force);
@@ -293,7 +293,7 @@ namespace lotuc::pod
     {
     }
 
-    Namespace(std::string const &name, bool defer, std::function<void(Namespace<T> &)> load_vars)
+    Namespace(std::string const &name, bool defer, std::function<void(Namespace<T, C> &)> load_vars)
       : name(name)
       , defer{ defer }
       , load_vars{ load_vars }
@@ -305,31 +305,37 @@ namespace lotuc::pod
     }
   };
 
-  template <typename T>
+  template <typename T, typename C>
   class Context : public PodTransport<T>
   {
   public:
+    C &components;
+
     std::string const _pod_id;
     std::function<void()> const _cleanup;
 
     std::vector<std::string> _ns_names;
-    std::map<std::string, std::unique_ptr<Namespace<T>>> _ns;
+    std::map<std::string, std::unique_ptr<Namespace<T, C>>> _ns;
 
-    Context(std::unique_ptr<Encoder<T>> encoder,
+    Context(C &components,
+            std::unique_ptr<Encoder<T>> encoder,
             std::unique_ptr<BencodeTransport> transport,
             std::function<void()> cleanup)
       : lotuc::pod::PodTransport<T>{ std::move(transport), std::move(encoder) }
       , _pod_id{}
+      , components{ components }
       , _cleanup{ std::move(cleanup) }
     {
     }
 
     Context(std::string const &pod_id,
+            C &components,
             std::unique_ptr<Encoder<T>> encoder,
             std::unique_ptr<BencodeTransport> transport,
             std::function<void()> cleanup)
       : lotuc::pod::PodTransport<T>{ std::move(transport), std::move(encoder) }
       , _pod_id{ pod_id }
+      , components{ components }
       , _cleanup{ std::move(cleanup) }
     {
     }
@@ -352,13 +358,14 @@ namespace lotuc::pod
      * vars have two parts, `ns`, `name`, it can be invoked via qualified name
      * `<ns>/<name>`.
      */
-    void add_ns(std::unique_ptr<Namespace<T>> ns);
+    void add_ns(std::unique_ptr<Namespace<T, C>> ns);
 
     /** find the `Var` by the qualified name. */
-    std::pair<Namespace<T> const *, Var<T> const *> find_var(std::string const &qualified_name);
+    std::pair<Namespace<T, C> const *, Var<T, C> const *>
+    find_var(std::string const &qualified_name);
 
     /** find namespace by its name. */
-    Namespace<T> *find_ns(std::string const &name);
+    Namespace<T, C> *find_ns(std::string const &name);
 
     /** https://github.com/babashka/pods?tab=readme-ov-file#describe
      *
@@ -368,29 +375,29 @@ namespace lotuc::pod
      * loaded `pod-id`. It's not a documented behavior, but here we're utilizing
      * it for customizing `pod-id`.
      */
-    bc::data describe(std::vector<std::unique_ptr<Namespace<T>>> &builtins);
+    bc::data describe(std::vector<std::unique_ptr<Namespace<T, C>>> &builtins);
   };
 
   /** A simple pod implementation. */
-  template <typename T>
+  template <typename T, typename C>
   class Pod
   {
   public:
-    Context<T> &ctx;
+    Context<T, C> &ctx;
 
-    Pod(Context<T> &ctx)
+    Pod(Context<T, C> &ctx)
       : ctx{ ctx }
     {
     }
 
-    virtual std::vector<std::unique_ptr<Namespace<T>>> builtins()
+    virtual std::vector<std::unique_ptr<Namespace<T, C>>> builtins()
     {
       return {};
     }
 
-    virtual void invoke(Namespace<T> const &ns,
-                        Var<T> const &var,
-                        std::unique_ptr<typename Var<T>::derefer> derefer)
+    virtual void invoke(Namespace<T, C> const &ns,
+                        Var<T, C> const &var,
+                        std::unique_ptr<typename Var<T, C>::derefer> derefer)
       = 0;
 
     void read_eval_loop()
@@ -450,7 +457,7 @@ namespace lotuc::pod
     }
   };
 
-  template <typename T>
+  template <typename T, typename C>
   class Var
   {
   public:
@@ -508,37 +515,37 @@ namespace lotuc::pod
     class derefer
     {
     public:
-      Context<T> &_ctx;
+      Context<T, C> &ctx;
       std::string id;
       T args;
       volatile bool done{ false };
 
       // clang-format off
 
-      derefer(Context<T> &ctx, std::string const &id, T const &args)
-        : _ctx(ctx) , id{ id } , args{ args } { }
+      derefer(Context<T, C> &ctx, std::string const &id, T const &args)
+        : ctx(ctx) , id{ id } , args{ args } { }
 
-      void send_stdout(std::string const &msg) { _ctx.send_stdout(id, msg); }
-      void sendln_stdout(std::string const &msg) { _ctx.send_stdout(id, msg + "\n"); }
+      void send_stdout(std::string const &msg) { ctx.send_stdout(id, msg); }
+      void sendln_stdout(std::string const &msg) { ctx.send_stdout(id, msg + "\n"); }
 
-      void send_stderr(std::string const &msg) { _ctx.send_stderr(id, msg); }
-      void sendln_stderr(std::string const &msg) { _ctx.send_stderr(id, msg + "\n"); }
+      void send_stderr(std::string const &msg) { ctx.send_stderr(id, msg); }
+      void sendln_stderr(std::string const &msg) { ctx.send_stderr(id, msg + "\n"); }
 
-      void callback(T const &v) { _ctx.send_invoke_callback(id, v); }
+      void callback(T const &v) { ctx.send_invoke_callback(id, v); }
 
-      void success() { _ctx.send_invoke_success(id); done = true; }
+      void success() { ctx.send_invoke_success(id); done = true; }
 
-      void success(T const &v) { _ctx.send_invoke_success(id, v); done = true; }
+      void success(T const &v) { ctx.send_invoke_success(id, v); done = true; }
 
       void error(std::string const &ex_message, T const &ex_data)
       {
-        _ctx.send_invoke_error(id, ex_message, ex_data);
+        ctx.send_invoke_error(id, ex_message, ex_data);
         done = true;
       }
 
       void error(std::string const &ex_message)
       {
-        _ctx.send_invoke_error(id, ex_message, _ctx._encoder->empty_dict());
+        ctx.send_invoke_error(id, ex_message, ctx._encoder->empty_dict());
         done = true;
       }
 
@@ -551,24 +558,24 @@ namespace lotuc::pod
     };
 
     virtual std::unique_ptr<derefer>
-    make_derefer(Context<T> &ctx, std::string const &id, T const &args) const = 0;
+    make_derefer(Context<T, C> &ctx, std::string const &id, T const &args) const = 0;
   };
 
-  template <typename T>
-  inline void Namespace<T>::add_var(std::unique_ptr<Var<T>> var)
+  template <typename T, typename C>
+  inline void Namespace<T, C>::add_var(std::unique_ptr<Var<T, C>> var)
   {
     auto n = var->name;
     _vars[n] = std::move(var);
   }
 
-  template <typename T>
-  inline bc::data Namespace<T>::describe()
+  template <typename T, typename C>
+  inline bc::data Namespace<T, C>::describe()
   {
     return describe(false);
   }
 
-  template <typename T>
-  inline bc::data Namespace<T>::describe(bool force)
+  template <typename T, typename C>
+  inline bc::data Namespace<T, C>::describe(bool force)
   {
     bc::dict v = bc::dict{
       { "name", name }
@@ -593,8 +600,8 @@ namespace lotuc::pod
     return v;
   }
 
-  template <typename T>
-  inline void Context<T>::add_ns(std::unique_ptr<Namespace<T>> ns)
+  template <typename T, typename C>
+  inline void Context<T, C>::add_ns(std::unique_ptr<Namespace<T, C>> ns)
   {
     auto n = ns->name;
     if(!_ns.contains(n))
@@ -604,8 +611,8 @@ namespace lotuc::pod
     _ns[n] = std::move(ns);
   }
 
-  template <typename T>
-  inline void Context<T>::cleanup() const
+  template <typename T, typename C>
+  inline void Context<T, C>::cleanup() const
   {
     if(_cleanup)
     {
@@ -613,8 +620,8 @@ namespace lotuc::pod
     }
   }
 
-  template <typename T>
-  inline Namespace<T> *Context<T>::find_ns(std::string const &name)
+  template <typename T, typename C>
+  inline Namespace<T, C> *Context<T, C>::find_ns(std::string const &name)
   {
     if(!_ns.contains(name))
     {
@@ -623,9 +630,9 @@ namespace lotuc::pod
     return _ns[name].get();
   }
 
-  template <typename T>
-  inline std::pair<Namespace<T> const *, Var<T> const *>
-  Context<T>::find_var(std::string const &qualified_name)
+  template <typename T, typename C>
+  inline std::pair<Namespace<T, C> const *, Var<T, C> const *>
+  Context<T, C>::find_var(std::string const &qualified_name)
   {
     auto pos = qualified_name.find('/');
     if(pos == std::string::npos)
@@ -637,7 +644,7 @@ namespace lotuc::pod
     {
       throw std::runtime_error{ "namespace not found: " + qualified_name };
     }
-    std::unique_ptr<Namespace<T>> &ns = _ns[_ns_name];
+    std::unique_ptr<Namespace<T, C>> &ns = _ns[_ns_name];
 
     auto _var_name = qualified_name.substr(pos + 1);
     if(!ns->_vars.contains(_var_name))
@@ -647,8 +654,8 @@ namespace lotuc::pod
     return std::make_pair(ns.get(), ns->_vars[_var_name].get());
   }
 
-  template <typename T>
-  inline bc::data Context<T>::describe(std::vector<std::unique_ptr<Namespace<T>>> &builtins)
+  template <typename T, typename C>
+  inline bc::data Context<T, C>::describe(std::vector<std::unique_ptr<Namespace<T, C>>> &builtins)
   {
     for(auto &ns : builtins)
     {
@@ -671,7 +678,7 @@ namespace lotuc::pod
       {
         if(_ns.contains(_pod_id))
         {
-          std::unique_ptr<Namespace<T>> &ns = _ns[_pod_id];
+          std::unique_ptr<Namespace<T, C>> &ns = _ns[_pod_id];
           namespaces.emplace_back(ns->describe());
         }
         else
@@ -687,7 +694,7 @@ namespace lotuc::pod
         {
           continue;
         }
-        std::unique_ptr<Namespace<T>> &ns = _ns[n];
+        std::unique_ptr<Namespace<T, C>> &ns = _ns[n];
         namespaces.emplace_back(ns->describe());
       }
     }
@@ -748,37 +755,37 @@ namespace lotuc::pod
   };
 
   // a default pod implementation.
-  template <typename T>
-  class PodImpl : public Pod<T>
+  template <typename T, typename C>
+  class PodImpl : public Pod<T, C>
   {
   public:
     ConcurrencyLimiter _concurrency_limiter;
     std::map<std::string, PendingInvoke<T>> _pendings;
     std::set<std::string> _builtin_ns_names{};
 
-    class pendings_var : public Var<T>
+    class pendings_var : public Var<T, C>
     {
     public:
-      PodImpl<T> &pod;
+      PodImpl<T, C> &pod;
 
-      pendings_var(PodImpl<T> &pod)
-        : Var<T>("pendings", "{:doc \"pending invokes\"}", "", false)
+      pendings_var(PodImpl<T, C> &pod)
+        : Var<T, C>("pendings", "{:doc \"pending invokes\"}", "", false)
         , pod{ pod }
       {
       }
 
-      class derefer : public Var<T>::derefer
+      class derefer : public Var<T, C>::derefer
       {
       public:
-        PodImpl<T> &pod;
+        PodImpl<T, C> &pod;
 
-        derefer(Context<T> &ctx, std::string const &id, T const &args, PodImpl<T> &pod)
-          : Var<T>::derefer::derefer{ ctx, id, args }
+        derefer(Context<T, C> &ctx, std::string const &id, T const &args, PodImpl<T, C> &pod)
+          : Var<T, C>::derefer::derefer{ ctx, id, args }
           , pod{ pod }
         {
         }
 
-        using lotuc::pod::Var<T>::derefer::derefer;
+        using lotuc::pod::Var<T, C>::derefer::derefer;
 
         void deref() override
         {
@@ -788,41 +795,42 @@ namespace lotuc::pod
           {
             t.push_back(&p.second);
           }
-          auto v = this->_ctx._encoder->encode(t);
-          this->_ctx.send_invoke_success_bc(this->id, v);
+          auto v = this->ctx._encoder->encode(t);
+          this->ctx.send_invoke_success_bc(this->id, v);
           this->done = true;
         }
       };
 
-      std::unique_ptr<typename Var<T>::derefer>
-      make_derefer(Context<T> &ctx, std::string const &id, T const &args) const override
+      std::unique_ptr<typename Var<T, C>::derefer>
+      make_derefer(Context<T, C> &ctx, std::string const &id, T const &args) const override
       {
         return std::make_unique<derefer>(ctx, id, args, this->pod);
       }
     };
 
-    PodImpl(Context<T> &ctx)
-      : PodImpl<T>::PodImpl{ ctx, 1024 }
+    PodImpl(Context<T, C> &ctx)
+      : PodImpl<T, C>::PodImpl{ ctx, 1024 }
     {
     }
 
-    PodImpl(Context<T> &ctx, int max_concurrent)
-      : Pod<T>::Pod{ ctx }
+    PodImpl(Context<T, C> &ctx, int max_concurrent)
+      : Pod<T, C>::Pod{ ctx }
       , _concurrency_limiter{ max_concurrent }
     {
     }
 
-    std::vector<std::unique_ptr<Namespace<T>>> builtins() override
+    std::vector<std::unique_ptr<Namespace<T, C>>> builtins() override
     {
-      std::vector<std::unique_ptr<Namespace<T>>> ret;
-      auto ns = std::make_unique<Namespace<T>>("lotuc.babashka.pods");
+      std::vector<std::unique_ptr<Namespace<T, C>>> ret;
+      auto ns = std::make_unique<Namespace<T, C>>("lotuc.babashka.pods");
       _builtin_ns_names.insert(ns->name);
       ns->add_var(std::make_unique<pendings_var>(*this));
       ret.push_back(std::move(ns));
       return ret;
     }
 
-    static void do_invoke(Var<T> const *var, std::unique_ptr<typename Var<T>::derefer> derefer)
+    static void
+    do_invoke(Var<T, C> const *var, std::unique_ptr<typename Var<T, C>::derefer> derefer)
     {
       try
       {
@@ -847,10 +855,10 @@ namespace lotuc::pod
       }
     }
 
-    static void watched_invoke(PodImpl<T> *pod,
-                               Namespace<T> const *ns,
-                               Var<T> const *var,
-                               std::unique_ptr<typename Var<T>::derefer> derefer)
+    static void watched_invoke(PodImpl<T, C> *pod,
+                               Namespace<T, C> const *ns,
+                               Var<T, C> const *var,
+                               std::unique_ptr<typename Var<T, C>::derefer> derefer)
     {
       // Now we only got two logic "concurrency groups" here. The builtin one
       // and others. We only limit the concurrency runs for the non builtin
@@ -876,7 +884,7 @@ namespace lotuc::pod
       std::string id = derefer->id;
       T args = derefer->args;
 
-      auto fut = std::async(PodImpl<T>::do_invoke, var, std::move(derefer));
+      auto fut = std::async(PodImpl<T, C>::do_invoke, var, std::move(derefer));
 
       // clang-format off
       ScopeGuard _cleanup{ [pod, &id]() { pod->_pendings.erase(id); } };
@@ -886,52 +894,54 @@ namespace lotuc::pod
       // clang-format on
     }
 
-    void invoke(Namespace<T> const &ns,
-                Var<T> const &var,
-                std::unique_ptr<typename Var<T>::derefer> derefer) override
+    void invoke(Namespace<T, C> const &ns,
+                Var<T, C> const &var,
+                std::unique_ptr<typename Var<T, C>::derefer> derefer) override
     {
-      std::thread(PodImpl<T>::watched_invoke, this, &ns, &var, std::move(derefer)).detach();
+      std::thread(PodImpl<T, C>::watched_invoke, this, &ns, &var, std::move(derefer)).detach();
     }
   };
 };
 
-#define define_pod_var_code(T, _class_name, _meta, _code)                                          \
-  class _class_name : public lotuc::pod::Var<T>                                                    \
-  {                                                                                                \
-  public:                                                                                          \
-    _class_name()                                                                                  \
-      : lotuc::pod::Var<T>(#_class_name, _meta, _code, false)                                      \
-    {                                                                                              \
-    }                                                                                              \
-    std::unique_ptr<lotuc::pod::Var<T>::derefer>                                                   \
-    make_derefer(lotuc::pod::Context<T> &ctx, std::string const &id, T const &args) const override \
-    {                                                                                              \
-      throw std::runtime_error{ "code var" };                                                      \
-    }                                                                                              \
+#define define_pod_var_code(T, C, _class_name, _meta, _code)                                     \
+  class _class_name : public lotuc::pod::Var<T, C>                                               \
+  {                                                                                              \
+  public:                                                                                        \
+    _class_name()                                                                                \
+      : lotuc::pod::Var<T, C>(#_class_name, _meta, _code, false)                                 \
+    {                                                                                            \
+    }                                                                                            \
+    std::unique_ptr<lotuc::pod::Var<T, C>::derefer> make_derefer(lotuc::pod::Context<T, C> &ctx, \
+                                                                 std::string const &id,          \
+                                                                 T const &args) const override   \
+    {                                                                                            \
+      throw std::runtime_error{ "code var" };                                                    \
+    }                                                                                            \
   }
 
-#define define_pod_var(T, _class_name, _name, _meta, _async)                                       \
-  class _class_name : public lotuc::pod::Var<T>                                                    \
-  {                                                                                                \
-  public:                                                                                          \
-    _class_name()                                                                                  \
-      : lotuc::pod::Var<T>(_name, _meta, "", _async)                                               \
-    {                                                                                              \
-    }                                                                                              \
-    class derefer : public lotuc::pod::Var<T>::derefer                                             \
-    {                                                                                              \
-      using lotuc::pod::Var<T>::derefer::derefer;                                                  \
-      void deref() override;                                                                       \
-    };                                                                                             \
-                                                                                                   \
-    std::unique_ptr<lotuc::pod::Var<T>::derefer>                                                   \
-    make_derefer(lotuc::pod::Context<T> &ctx, std::string const &id, T const &args) const override \
-    {                                                                                              \
-      return std::make_unique<derefer>(ctx, id, args);                                             \
-    }                                                                                              \
+#define define_pod_var(T, C, _class_name, _name, _meta, _async)                                  \
+  class _class_name : public lotuc::pod::Var<T, C>                                               \
+  {                                                                                              \
+  public:                                                                                        \
+    _class_name()                                                                                \
+      : lotuc::pod::Var<T, C>(_name, _meta, "", _async)                                          \
+    {                                                                                            \
+    }                                                                                            \
+    class derefer : public lotuc::pod::Var<T, C>::derefer                                        \
+    {                                                                                            \
+      using lotuc::pod::Var<T, C>::derefer::derefer;                                             \
+      void deref() override;                                                                     \
+    };                                                                                           \
+                                                                                                 \
+    std::unique_ptr<lotuc::pod::Var<T, C>::derefer> make_derefer(lotuc::pod::Context<T, C> &ctx, \
+                                                                 std::string const &id,          \
+                                                                 T const &args) const override   \
+    {                                                                                            \
+      return std::make_unique<derefer>(ctx, id, args);                                           \
+    }                                                                                            \
   }
 
-#define define_pod_var_sync(T, _name, _meta) define_pod_var(T, _name, #_name, _meta, false)
-#define define_pod_var_async(T, _name, _meta) define_pod_var(T, _name, #_name, _meta, true)
+#define define_pod_var_sync(T, C, _name, _meta) define_pod_var(T, C, _name, #_name, _meta, false)
+#define define_pod_var_async(T, C, _name, _meta) define_pod_var(T, C, _name, #_name, _meta, true)
 
 #endif // POD_H_

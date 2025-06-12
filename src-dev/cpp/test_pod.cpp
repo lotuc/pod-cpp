@@ -20,7 +20,9 @@ int main(int argc, char **argv)
     ss >> max_concurrent;
   }
 
-  std::unique_ptr<pod::Context<json>> ctx = pod::build_json_ctx(pod_id);
+  test_pod::C c{};
+  std::unique_ptr<pod::Context<json, test_pod::C>> ctx
+    = pod::build_json_ctx<test_pod::C>(pod_id, c);
   ctx->add_ns(test_pod::build_ns());
   ctx->add_ns(test_pod::build_defer_ns());
   pod::build_pod(*ctx, max_concurrent).read_eval_loop();

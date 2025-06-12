@@ -89,7 +89,7 @@ namespace test_pod
   }
 
   static void
-  threaded_task(lotuc::pod::Var<json>::derefer *d, std::string const &id, std::string const &msg)
+  threaded_task(lotuc::pod::Var<json, C>::derefer *d, std::string const &id, std::string const &msg)
   {
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     d->callback(msg);
@@ -139,4 +139,14 @@ namespace test_pod
     success();
   }
 
+  void counter_set::derefer::deref()
+  {
+    ctx.components.counter = args[0].get<int>();
+    success();
+  }
+
+  void counter_get_inc::derefer::deref()
+  {
+    success(ctx.components.counter++);
+  }
 }

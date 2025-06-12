@@ -11,9 +11,12 @@
 namespace lotuc::pod
 {
 
-  inline std::unique_ptr<Context<json>> build_jsonrpc_ctx(std::string const &pod_id,
-                                                          JsonRpcTransport *jsonrpc_transport,
-                                                          std::function<void()> const &cleanup)
+
+  template <typename C>
+  inline std::unique_ptr<Context<json, C>> build_jsonrpc_ctx(std::string const &pod_id,
+                                                             C &components,
+                                                             JsonRpcTransport *jsonrpc_transport,
+                                                             std::function<void()> const &cleanup)
   {
     std::unique_ptr<Encoder<json>> encoder;
     std::unique_ptr<BencodeTransport> transport;
@@ -32,14 +35,16 @@ namespace lotuc::pod
       };
     }
 
-    return std::make_unique<Context<json>>(pod_id,
-                                           std::move(encoder),
-                                           std::move(transport),
-                                           std::move(cleanup_all));
+    return std::make_unique<Context<json, C>>(pod_id,
+                                              components,
+                                              std::move(encoder),
+                                              std::move(transport),
+                                              std::move(cleanup_all));
   }
 
-  inline std::unique_ptr<Context<json>>
-  build_json_ctx(std::string const &pod_id, std::function<void()> const &cleanup)
+  template <typename C>
+  inline std::unique_ptr<Context<json, C>>
+  build_json_ctx(std::string const &pod_id, C &components, std::function<void()> const &cleanup)
   {
     std::unique_ptr<Encoder<json>> encoder;
     std::unique_ptr<BencodeTransport> transport;
@@ -73,32 +78,38 @@ namespace lotuc::pod
       };
     }
 
-    return std::make_unique<Context<json>>(pod_id,
-                                           std::move(encoder),
-                                           std::move(transport),
-                                           std::move(cleanup_all));
+    return std::make_unique<Context<json, C>>(pod_id,
+                                              components,
+                                              std::move(encoder),
+                                              std::move(transport),
+                                              std::move(cleanup_all));
   }
 
-  inline std::unique_ptr<Context<json>>
-  build_json_ctx(char const *pod_id, std::function<void()> const &cleanup)
+  template <typename C>
+  inline std::unique_ptr<Context<json, C>>
+  build_json_ctx(char const *pod_id, C &components, std::function<void()> const &cleanup)
   {
     auto s = std::string(pod_id);
-    return build_json_ctx(s, cleanup);
+    return build_json_ctx<C>(s, components, cleanup);
   }
 
-  inline std::unique_ptr<Context<json>> build_json_ctx(std::string const &pod_id)
+  template <typename C>
+  inline std::unique_ptr<Context<json, C>> build_json_ctx(std::string const &pod_id, C &components)
   {
-    return build_json_ctx(pod_id, nullptr);
+    return build_json_ctx<C>(pod_id, components, nullptr);
   }
 
-  inline std::unique_ptr<Context<json>> build_json_ctx(std::function<void()> const &cleanup)
+  template <typename C>
+  inline std::unique_ptr<Context<json, C>>
+  build_json_ctx(C &components, std::function<void()> const &cleanup)
   {
-    return build_json_ctx("", cleanup);
+    return build_json_ctx<C>("", components, cleanup);
   }
 
-  inline pod::PodImpl<json> build_pod(pod::Context<json> &ctx, int max_concurrent = 1024)
+  template <typename C>
+  inline pod::PodImpl<json, C> build_pod(pod::Context<json, C> &ctx, int max_concurrent = 1024)
   {
-    return PodImpl<json>{ ctx, max_concurrent };
+    return PodImpl<json, C>{ ctx, max_concurrent };
   }
 }
 

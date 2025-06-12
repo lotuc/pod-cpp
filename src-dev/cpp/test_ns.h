@@ -12,27 +12,35 @@ using json = nlohmann::json;
 // https://github.com/babashka/pods/blob/master/test-pod/pod/test_pod.clj
 namespace test_pod
 {
+
+  struct C
+  {
+    int counter;
+  };
+
   // invoking sync vars will block the Pod's read_eval_loop, while the async ones will not.
 
   // customize the var's name (notice the kebab case)
-  define_pod_var(json, add_sync, "add-sync", "{:doc \"add the arguments\"}", false);
-  define_pod_var(json, add_async, "add-async", "{:doc \"add the arguments\"}", true);
+  define_pod_var(json, C, add_sync, "add-sync", "{:doc \"add the arguments\"}", false);
+  define_pod_var(json, C, add_async, "add-async", "{:doc \"add the arguments\"}", true);
 
   // use the var class's name as the var's name
-  define_pod_var_async(json, range_stream, "");
-  define_pod_var_sync(json, echo, "");
-  define_pod_var_sync(json, error, "");
-  define_pod_var_sync(json, print, "");
-  define_pod_var_sync(json, print_err, "");
-  define_pod_var_sync(json, return_nil, "");
-  define_pod_var_code(json, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
-  define_pod_var_code(json, fn_call, "", "(defn fn-call [f x] (f x))");
-  define_pod_var_sync(json, multi_threaded_test, "");
-  define_pod_var_sync(json, mis_implementation, "");
-  define_pod_var_sync(json, sleep, "{:doc \"(sleep ms)\"}");
-  define_pod_var_async(json, async_sleep, "{:doc \"(sleep ms)\"}");
+  define_pod_var_async(json, C, range_stream, "");
+  define_pod_var_sync(json, C, echo, "");
+  define_pod_var_sync(json, C, error, "");
+  define_pod_var_sync(json, C, print, "");
+  define_pod_var_sync(json, C, print_err, "");
+  define_pod_var_sync(json, C, return_nil, "");
+  define_pod_var_code(json, C, do_twice, "", "(defmacro do-twice [x] `(do ~x ~x))");
+  define_pod_var_code(json, C, fn_call, "", "(defn fn-call [f x] (f x))");
+  define_pod_var_sync(json, C, multi_threaded_test, "");
+  define_pod_var_sync(json, C, mis_implementation, "");
+  define_pod_var_sync(json, C, sleep, "{:doc \"(sleep ms)\"}");
+  define_pod_var_async(json, C, async_sleep, "{:doc \"(sleep ms)\"}");
+  define_pod_var_async(json, C, counter_set, "");
+  define_pod_var_async(json, C, counter_get_inc, "");
 
-  static void load_vars(lotuc::pod::Namespace<json> &ns)
+  static void load_vars(lotuc::pod::Namespace<json, C> &ns)
   {
     ns.add_var(std::make_unique<add_sync>());
     ns.add_var(std::make_unique<add_async>());
@@ -49,18 +57,20 @@ namespace test_pod
     ns.add_var(std::make_unique<mis_implementation>());
     ns.add_var(std::make_unique<sleep>());
     ns.add_var(std::make_unique<async_sleep>());
+    ns.add_var(std::make_unique<counter_set>());
+    ns.add_var(std::make_unique<counter_get_inc>());
   }
 
-  static std::unique_ptr<lotuc::pod::Namespace<json>> build_ns()
+  static std::unique_ptr<lotuc::pod::Namespace<json, C>> build_ns()
   {
-    auto ns = std::make_unique<lotuc::pod::Namespace<json>>("test-pod");
+    auto ns = std::make_unique<lotuc::pod::Namespace<json, C>>("test-pod");
     load_vars(*ns);
     return ns;
   }
 
-  static std::unique_ptr<lotuc::pod::Namespace<json>> build_defer_ns()
+  static std::unique_ptr<lotuc::pod::Namespace<json, C>> build_defer_ns()
   {
-    return std::make_unique<lotuc::pod::Namespace<json>>("test-pod-defer", true, load_vars);
+    return std::make_unique<lotuc::pod::Namespace<json, C>>("test-pod-defer", true, load_vars);
   }
 }
 
